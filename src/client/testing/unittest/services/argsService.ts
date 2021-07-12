@@ -5,7 +5,7 @@
 
 import { inject, injectable } from 'inversify';
 import { IServiceContainer } from '../../../ioc/types';
-import { IArgumentsHelper, IArgumentsService, TestFilter } from '../../types';
+import { IArgumentsHelper, IArgumentsService, TestFilter } from '../../common/types';
 
 const OptionsWithArguments = ['-k', '-p', '-s', '-t', '--pattern', '--start-directory', '--top-level-directory'];
 
@@ -22,7 +22,7 @@ const OptionsWithoutArguments = [
     '--help',
     '--locals',
     '--quiet',
-    '--verbose'
+    '--verbose',
 ];
 
 @injectable()
@@ -34,7 +34,7 @@ export class ArgumentsService implements IArgumentsService {
     public getKnownOptions(): { withArgs: string[]; withoutArgs: string[] } {
         return {
             withArgs: OptionsWithArguments,
-            withoutArgs: OptionsWithoutArguments
+            withoutArgs: OptionsWithoutArguments,
         };
     }
     public getOptionValue(args: string[], option: string): string | string[] | undefined {
@@ -64,7 +64,7 @@ export class ArgumentsService implements IArgumentsService {
             const positionalArgs = this.helper.getPositionalArguments(
                 filteredArgs,
                 OptionsWithArguments,
-                OptionsWithoutArguments
+                OptionsWithoutArguments,
             );
             filteredArgs = filteredArgs.filter((item) => positionalArgs.indexOf(item) === -1);
         }

@@ -1,11 +1,17 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-import { traceVerbose } from '../../../../common/logger';
+import { uniq } from 'lodash';
+import { traceError, traceVerbose } from '../../../../common/logger';
 import { Architecture } from '../../../../common/utils/platform';
 import {
-    PythonEnvInfo, PythonEnvKind, PythonVersion, UNKNOWN_PYTHON_VERSION,
+    PythonEnvInfo,
+    PythonEnvKind,
+    PythonEnvSource,
+    PythonVersion,
+    UNKNOWN_PYTHON_VERSION,
 } from '../../../base/info';
+import { buildEnvInfo } from '../../../base/info/env';
 import { parseVersion } from '../../../base/info/pythonVersion';
 import { IPythonEnvsIterator, Locator } from '../../../base/locator';
 import { getFileInfo } from '../../../common/externalDependencies';
@@ -23,10 +29,17 @@ export class WindowsRegistryLocator extends Locator {
     private kind: PythonEnvKind = PythonEnvKind.OtherGlobal;
 
     public iterEnvs(): IPythonEnvsIterator {
-        const buildEnvInfo = (data: IRegistryInterpreterData) => this.buildEnvInfo(data);
+        const buildRegistryEnvInfo = (data: IRegistryInterpreterData) => this.buildRegistryEnvInfo(data);
         const iterator = async function* () {
             const interpreters = await getRegistryInterpreters();
-            yield* interpreters.map(buildEnvInfo);
+            for (const interpreter of interpreters) {
+                try {
+                    const env = await buildRegistryEnvInfo(interpreter);
+                    yield env;
+                } catch (ex) {
+                    traceError(`Failed to process environment: ${interpreter}`, ex);
+                }
+            }
         };
         return iterator();
     }
@@ -36,14 +49,16 @@ export class WindowsRegistryLocator extends Locator {
         const interpreters = await getRegistryInterpreters();
         const selected = interpreters.find((i) => i.interpreterPath.toUpperCase() === executablePath.toUpperCase());
         if (selected) {
-            return this.buildEnvInfo(selected);
+            const regEnv = await this.buildRegistryEnvInfo(selected);
+            regEnv.source = typeof env === 'string' ? regEnv.source : uniq(regEnv.source.concat(env.source));
+            return regEnv;
         }
 
         return undefined;
     }
 
-    private async buildEnvInfo(data: IRegistryInterpreterData): Promise<PythonEnvInfo> {
-        const versionStr = (data.versionStr ?? data.sysVersionStr) ?? data.interpreterPath;
+    private async buildRegistryEnvInfo(data: IRegistryInterpreterData): Promise<PythonEnvInfo> {
+        const versionStr = data.versionStr ?? data.sysVersionStr ?? data.interpreterPath;
         let version: PythonVersion = UNKNOWN_PYTHON_VERSION;
 
         try {
@@ -52,19 +67,16 @@ export class WindowsRegistryLocator extends Locator {
             traceVerbose(`Failed to parse version: ${versionStr}`, ex);
         }
 
-        return {
-            name: '',
-            location: '',
+        const env = buildEnvInfo({
             kind: this.kind,
-            executable: {
-                filename: data.interpreterPath,
-                sysPrefix: '',
-                ...(await getFileInfo(data.interpreterPath)),
-            },
+            executable: data.interpreterPath,
+            fileInfo: await getFileInfo(data.interpreterPath),
             version,
             arch: getArchitecture(data),
-            distro: { org: data.distroOrgName ?? '' },
-            defaultDisplayName: data.displayName,
-        };
+            org: data.distroOrgName,
+            source: [PythonEnvSource.WindowsRegistry],
+        });
+        env.distro.defaultDisplayName = data.companyDisplayName;
+        return env;
     }
 }

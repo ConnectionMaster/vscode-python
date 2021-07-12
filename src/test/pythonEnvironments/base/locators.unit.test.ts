@@ -8,9 +8,7 @@ import { PythonEnvInfo, PythonEnvKind } from '../../../client/pythonEnvironments
 import { PythonLocatorQuery } from '../../../client/pythonEnvironments/base/locator';
 import { Locators } from '../../../client/pythonEnvironments/base/locators';
 import { PythonEnvsChangedEvent } from '../../../client/pythonEnvironments/base/watcher';
-import {
-    createLocatedEnv, createNamedEnv, getEnvs, SimpleLocator,
-} from './common';
+import { createLocatedEnv, createNamedEnv, getEnvs, SimpleLocator } from './common';
 
 suite('Python envs locators - Locators', () => {
     suite('onChanged consolidates', () => {
@@ -186,97 +184,6 @@ suite('Python envs locators - Locators', () => {
             const envs = await getEnvs(iterator);
 
             assert.deepEqual(envs, expected);
-        });
-    });
-
-    suite('resolveEnv()', () => {
-        test('one wrapped', async () => {
-            const env1 = createNamedEnv('foo', '3.8.1', PythonEnvKind.Venv);
-            const expected = env1;
-            const calls: number[] = [];
-            const sub1 = new SimpleLocator([env1], {
-                resolve: async (e) => {
-                    calls.push(1);
-                    return e;
-                },
-            });
-            const locators = new Locators([sub1]);
-
-            const resolved = await locators.resolveEnv(env1);
-
-            assert.deepEqual(resolved, expected);
-            assert.deepEqual(calls, [1]);
-        });
-
-        test('first one resolves', async () => {
-            const env1 = createNamedEnv('foo', '3.8.1', PythonEnvKind.Venv);
-            const expected = env1;
-            const calls: number[] = [];
-            const sub1 = new SimpleLocator([env1], {
-                resolve: async (e) => {
-                    calls.push(1);
-                    return e;
-                },
-            });
-            const sub2 = new SimpleLocator([env1], {
-                resolve: async (e) => {
-                    calls.push(2);
-                    return e;
-                },
-            });
-            const locators = new Locators([sub1, sub2]);
-
-            const resolved = await locators.resolveEnv(env1);
-
-            assert.deepEqual(resolved, expected);
-            assert.deepEqual(calls, [1]);
-        });
-
-        test('second one resolves', async () => {
-            const env1 = createNamedEnv('foo', '3.8.1', PythonEnvKind.Venv);
-            const expected = env1;
-            const calls: number[] = [];
-            const sub1 = new SimpleLocator([env1], {
-                resolve: async () => {
-                    calls.push(1);
-                    return undefined;
-                },
-            });
-            const sub2 = new SimpleLocator([env1], {
-                resolve: async (e) => {
-                    calls.push(2);
-                    return e;
-                },
-            });
-            const locators = new Locators([sub1, sub2]);
-
-            const resolved = await locators.resolveEnv(env1);
-
-            assert.deepEqual(resolved, expected);
-            assert.deepEqual(calls, [1, 2]);
-        });
-
-        test('none resolve', async () => {
-            const env1 = createNamedEnv('foo', '3.8.1', PythonEnvKind.Venv);
-            const calls: number[] = [];
-            const sub1 = new SimpleLocator([env1], {
-                resolve: async () => {
-                    calls.push(1);
-                    return undefined;
-                },
-            });
-            const sub2 = new SimpleLocator([env1], {
-                resolve: async () => {
-                    calls.push(2);
-                    return undefined;
-                },
-            });
-            const locators = new Locators([sub1, sub2]);
-
-            const resolved = await locators.resolveEnv(env1);
-
-            assert.equal(resolved, undefined);
-            assert.deepEqual(calls, [1, 2]);
         });
     });
 });

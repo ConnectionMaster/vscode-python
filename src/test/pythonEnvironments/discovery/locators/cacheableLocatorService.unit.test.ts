@@ -1,15 +1,12 @@
+/* eslint-disable max-classes-per-file */
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
 'use strict';
 
-// tslint:disable:no-any max-classes-per-file max-func-body-length
-
 import { expect } from 'chai';
 import * as md5 from 'md5';
-import {
-    anything, instance, mock, verify, when,
-} from 'ts-mockito';
+import { anything, instance, mock, verify, when } from 'ts-mockito';
 import { Disposable, Uri, WorkspaceFolder } from 'vscode';
 import { IWorkspaceService } from '../../../../client/common/application/types';
 import { WorkspaceService } from '../../../../client/common/application/workspace';
@@ -49,18 +46,22 @@ suite('Interpreters - Cacheable Locator Service', () => {
             }
         }
         class MockLocator {
+            // eslint-disable-next-line class-methods-use-this
             public async getInterpretersImplementation(): Promise<PythonEnvironment[]> {
                 return [];
             }
 
+            // eslint-disable-next-line class-methods-use-this
             public getCachedInterpreters(): PythonEnvironment[] | undefined {
                 return undefined;
             }
 
+            // eslint-disable-next-line class-methods-use-this
             public async cacheInterpreters() {
                 return undefined;
             }
 
+            // eslint-disable-next-line class-methods-use-this
             public getCacheKey(): string {
                 return '';
             }
@@ -71,9 +72,11 @@ suite('Interpreters - Cacheable Locator Service', () => {
         });
 
         test('Interpreters must be retrieved once, then cached', async () => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const expectedInterpreters = [1, 2] as any;
             const mockedLocatorForVerification = mock(MockLocator);
             const locator = new (class extends Locator {
+                // eslint-disable-next-line class-methods-use-this
                 protected async addHandlersForInterpreterWatchers(
                     _cacheKey: string,
                     _resource: Resource,
@@ -103,8 +106,11 @@ suite('Interpreters - Cacheable Locator Service', () => {
         test('Ensure onDidCreate event handler is attached', async () => {
             const mockedLocatorForVerification = mock(MockLocator);
             class Watcher implements IInterpreterWatcher {
+                // eslint-disable-next-line class-methods-use-this
                 public onDidCreate(
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     _listener: (e: Resource) => any,
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     _thisArgs?: any,
                     _disposables?: Disposable[],
                 ): Disposable {
@@ -114,6 +120,7 @@ suite('Interpreters - Cacheable Locator Service', () => {
             const watcher: IInterpreterWatcher = mock(Watcher);
 
             const locator = new (class extends Locator {
+                // eslint-disable-next-line class-methods-use-this
                 protected async getInterpreterWatchers(_resource: Resource): Promise<IInterpreterWatcher[]> {
                     return [instance(watcher)];
                 }
@@ -125,13 +132,17 @@ suite('Interpreters - Cacheable Locator Service', () => {
         });
 
         test('Ensure cache is cleared when watcher event fires', async () => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const expectedInterpreters = [1, 2] as any;
             const mockedLocatorForVerification = mock(MockLocator);
             class Watcher implements IInterpreterWatcher {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 private listner?: (e: Resource) => any;
 
                 public onDidCreate(
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     listener: (e: Resource) => any,
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     _thisArgs?: any,
                     _disposables?: Disposable[],
                 ): Disposable {
@@ -146,6 +157,7 @@ suite('Interpreters - Cacheable Locator Service', () => {
             const watcher = new Watcher();
 
             const locator = new (class extends Locator {
+                // eslint-disable-next-line class-methods-use-this
                 protected async getInterpreterWatchers(_resource: Resource): Promise<IInterpreterWatcher[]> {
                     return [watcher];
                 }
@@ -186,14 +198,18 @@ suite('Interpreters - Cacheable Locator Service', () => {
         test('Ensure locating event is raised', async () => {
             const mockedLocatorForVerification = mock(MockLocator);
             const locator = new (class extends Locator {
+                // eslint-disable-next-line class-methods-use-this
                 protected async getInterpreterWatchers(_resource: Resource): Promise<IInterpreterWatcher[]> {
                     return [];
                 }
             })('dummy', instance(serviceContainer), instance(mockedLocatorForVerification));
 
             let locatingEventRaised = false;
-            locator.onLocating(() => (locatingEventRaised = true));
+            locator.onLocating(() => {
+                locatingEventRaised = true;
+            });
 
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             when(mockedLocatorForVerification.getInterpretersImplementation()).thenResolve([1, 2] as any);
             when(mockedLocatorForVerification.getCacheKey()).thenReturn('xyz');
             when(mockedLocatorForVerification.getCachedInterpreters()).thenResolve();
@@ -208,19 +224,21 @@ suite('Interpreters - Cacheable Locator Service', () => {
                 noop();
             }
 
-            // tslint:disable-next-line:no-unnecessary-override
             public getCacheKey(resource?: Uri) {
                 return super.getCacheKey(resource);
             }
 
+            // eslint-disable-next-line class-methods-use-this
             protected async getInterpretersImplementation(_resource?: Uri): Promise<PythonEnvironment[]> {
                 return [];
             }
 
+            // eslint-disable-next-line class-methods-use-this
             protected getCachedInterpreters(_resource?: Uri): PythonEnvironment[] | undefined {
                 return [];
             }
 
+            // eslint-disable-next-line class-methods-use-this
             protected async cacheInterpreters(_interpreters: PythonEnvironment[], _resource?: Uri) {
                 noop();
             }

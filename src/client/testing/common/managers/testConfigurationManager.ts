@@ -6,57 +6,70 @@ import { IFileSystem } from '../../../common/platform/types';
 import { IInstaller, IOutputChannel } from '../../../common/types';
 import { createDeferred } from '../../../common/utils/async';
 import { IServiceContainer } from '../../../ioc/types';
-import { ITestConfigSettingsService, ITestConfigurationManager } from '../../types';
-import { TEST_OUTPUT_CHANNEL, UNIT_TEST_PRODUCTS } from '../constants';
-import { UnitTestProduct } from '../types';
+import { TEST_OUTPUT_CHANNEL } from '../../constants';
+import { UNIT_TEST_PRODUCTS } from '../constants';
+import { ITestConfigSettingsService, ITestConfigurationManager, UnitTestProduct } from '../types';
+
+function handleCancelled(): void {
+    traceInfo('testing configuration (in UI) cancelled');
+    throw Error('cancelled');
+}
 
 export abstract class TestConfigurationManager implements ITestConfigurationManager {
     protected readonly outputChannel: OutputChannel;
+
     protected readonly installer: IInstaller;
+
     protected readonly testConfigSettingsService: ITestConfigSettingsService;
+
+    private readonly handleCancelled = handleCancelled;
+
     constructor(
         protected workspace: Uri,
         protected product: UnitTestProduct,
         protected readonly serviceContainer: IServiceContainer,
-        cfg?: ITestConfigSettingsService
+        cfg?: ITestConfigSettingsService,
     ) {
         this.outputChannel = serviceContainer.get<OutputChannel>(IOutputChannel, TEST_OUTPUT_CHANNEL);
         this.installer = serviceContainer.get<IInstaller>(IInstaller);
-        this.testConfigSettingsService = cfg
-            ? cfg
-            : serviceContainer.get<ITestConfigSettingsService>(ITestConfigSettingsService);
+        this.testConfigSettingsService =
+            cfg || serviceContainer.get<ITestConfigSettingsService>(ITestConfigSettingsService);
     }
+
     public abstract configure(wkspace: Uri): Promise<void>;
+
     public abstract requiresUserToConfigure(wkspace: Uri): Promise<boolean>;
-    public async enable() {
+
+    public async enable(): Promise<void> {
         // Disable other test frameworks.
         await Promise.all(
             UNIT_TEST_PRODUCTS.filter((prod) => prod !== this.product).map((prod) =>
-                this.testConfigSettingsService.disable(this.workspace, prod)
-            )
+                this.testConfigSettingsService.disable(this.workspace, prod),
+            ),
         );
         await this.testConfigSettingsService.enable(this.workspace, this.product);
     }
-    // tslint:disable-next-line:no-any
-    public async disable() {
+
+    public async disable(): Promise<void> {
         return this.testConfigSettingsService.enable(this.workspace, this.product);
     }
+
     protected selectTestDir(rootDir: string, subDirs: string[], customOptions: QuickPickItem[] = []): Promise<string> {
         const options = {
             ignoreFocusOut: true,
             matchOnDescription: true,
             matchOnDetail: true,
-            placeHolder: 'Select the directory containing the tests'
+            placeHolder: 'Select the directory containing the tests',
         };
         let items: QuickPickItem[] = subDirs
             .map((dir) => {
                 const dirName = path.relative(rootDir, dir);
                 if (dirName.indexOf('.') === 0) {
-                    return;
+                    return undefined;
                 }
                 return {
                     label: dirName,
-                    description: ''
+                    description: '',
                 };
             })
             .filter((item) => item !== undefined)
@@ -83,14 +96,14 @@ export abstract class TestConfigurationManager implements ITestConfigurationMana
             ignoreFocusOut: true,
             matchOnDescription: true,
             matchOnDetail: true,
-            placeHolder: 'Select the pattern to identify test files'
+            placeHolder: 'Select the pattern to identify test files',
         };
         const items: QuickPickItem[] = [
             { label: '*test.py', description: "Python Files ending with 'test'" },
             { label: '*_test.py', description: "Python Files ending with '_test'" },
             { label: 'test*.py', description: "Python Files beginning with 'test'" },
             { label: 'test_*.py', description: "Python Files beginning with 'test_'" },
-            { label: '*test*.py', description: "Python Files containing the word 'test'" }
+            { label: '*test*.py', description: "Python Files containing the word 'test'" },
         ];
 
         const def = createDeferred<string>();
@@ -106,6 +119,7 @@ export abstract class TestConfigurationManager implements ITestConfigurationMana
 
         return def.promise;
     }
+
     protected getTestDirs(rootDir: string): Promise<string[]> {
         const fs = this.serviceContainer.get<IFileSystem>(IFileSystem);
         return fs.getSubDirectories(rootDir).then((subDirs) => {
@@ -119,10 +133,5 @@ export abstract class TestConfigurationManager implements ITestConfigurationMana
             // The test dirs are now on top.
             return possibleTestDirs;
         });
-    }
-
-    private handleCancelled() {
-        traceInfo('testing configuration (in UI) cancelled');
-        throw Error('cancelled');
     }
 }

@@ -16,7 +16,6 @@ import { TerminalAutoActivation } from '../../../client/terminals/activation';
 import { ITerminalAutoActivation } from '../../../client/terminals/types';
 import { noop } from '../../core';
 
-// tslint:disable-next-line: max-func-body-length
 suite('Terminal Auto Activation', () => {
     let activator: ITerminalActivator;
     let terminalManager: ITerminalManager;
@@ -34,7 +33,7 @@ suite('Terminal Auto Activation', () => {
             processId: Promise.resolve(0),
             sendText: noop,
             show: noop,
-            exitStatus: { code: 0 }
+            exitStatus: { code: 0 },
         };
         terminalManager = mock(TerminalManager);
         activator = mock(TerminalActivator);
@@ -44,7 +43,7 @@ suite('Terminal Auto Activation', () => {
             instance(terminalManager),
             [],
             instance(activator),
-            instance(activeResourceService)
+            instance(activeResourceService),
         );
     });
 
@@ -77,7 +76,7 @@ suite('Terminal Auto Activation', () => {
             processId: Promise.resolve(0),
             sendText: noop,
             show: noop,
-            exitStatus: { code: 0 }
+            exitStatus: { code: 0 },
         };
         type EventHandler = (e: Terminal) => void;
         let handler: undefined | EventHandler;
@@ -91,6 +90,37 @@ suite('Terminal Auto Activation', () => {
         when(activator.activateEnvironmentInTerminal(anything(), anything())).thenResolve();
 
         terminalAutoActivation.register();
+
+        expect(handler).not.to.be.an('undefined', 'event handler not initialized');
+
+        handler!.bind(terminalAutoActivation)(terminal);
+
+        verify(activator.activateEnvironmentInTerminal(terminal, anything())).never();
+    });
+    test('New Terminals should not be activated if auto activation is to be disabled', async () => {
+        terminal = {
+            dispose: noop,
+            hide: noop,
+            name: 'Python',
+            creationOptions: { hideFromUser: false },
+            processId: Promise.resolve(0),
+            sendText: noop,
+            show: noop,
+            exitStatus: { code: 0 },
+        };
+        type EventHandler = (e: Terminal) => void;
+        let handler: undefined | EventHandler;
+        const handlerDisposable = TypeMoq.Mock.ofType<IDisposable>();
+        const onDidOpenTerminal = (cb: EventHandler) => {
+            handler = cb;
+            return handlerDisposable.object;
+        };
+        when(activeResourceService.getActiveResource()).thenReturn(resource);
+        when(terminalManager.onDidOpenTerminal).thenReturn(onDidOpenTerminal);
+        when(activator.activateEnvironmentInTerminal(anything(), anything())).thenResolve();
+
+        terminalAutoActivation.register();
+        terminalAutoActivation.disableAutoActivation(terminal);
 
         expect(handler).not.to.be.an('undefined', 'event handler not initialized');
 

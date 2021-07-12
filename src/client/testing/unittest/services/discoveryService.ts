@@ -6,8 +6,14 @@ import * as internalPython from '../../../common/process/internal/python';
 import { IServiceContainer } from '../../../ioc/types';
 import { UNITTEST_PROVIDER } from '../../common/constants';
 import { Options } from '../../common/runner';
-import { ITestDiscoveryService, ITestRunner, ITestsParser, TestDiscoveryOptions, Tests } from '../../common/types';
-import { IArgumentsHelper } from '../../types';
+import {
+    IArgumentsHelper,
+    ITestDiscoveryService,
+    ITestRunner,
+    ITestsParser,
+    TestDiscoveryOptions,
+    Tests,
+} from '../../common/types';
 
 type UnitTestDiscoveryOptions = TestDiscoveryOptions & {
     startDirectory: string;
@@ -20,7 +26,7 @@ export class TestDiscoveryService implements ITestDiscoveryService {
     private readonly runner: ITestRunner;
     constructor(
         @inject(IServiceContainer) serviceContainer: IServiceContainer,
-        @inject(ITestsParser) @named(UNITTEST_PROVIDER) private testParser: ITestsParser
+        @inject(ITestsParser) @named(UNITTEST_PROVIDER) private testParser: ITestsParser,
     ) {
         this.argsHelper = serviceContainer.get<IArgumentsHelper>(IArgumentsHelper);
         this.runner = serviceContainer.get<ITestRunner>(ITestRunner);
@@ -31,11 +37,11 @@ export class TestDiscoveryService implements ITestDiscoveryService {
         const runOptions: Options = {
             // unittest needs to load modules in the workspace
             // isolating it breaks unittest discovery
-            args: internalPython.execCode(pythonScript, false),
+            args: internalPython.execCode(pythonScript),
             cwd: options.cwd,
             workspaceFolder: options.workspaceFolder,
             token: options.token,
-            outChannel: options.outChannel
+            outChannel: options.outChannel,
         };
 
         const data = await this.runner.run(UNITTEST_PROVIDER, runOptions);
@@ -65,7 +71,7 @@ for suite in suites._tests:
         return {
             ...options,
             startDirectory: this.getStartDirectory(options),
-            pattern: this.getTestPattern(options)
+            pattern: this.getTestPattern(options),
         };
     }
     private getStartDirectory(options: TestDiscoveryOptions) {

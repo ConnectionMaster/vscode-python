@@ -3,8 +3,7 @@ import { Uri, WorkspaceConfiguration } from 'vscode';
 import { IWorkspaceService } from '../../../common/application/types';
 import { Product } from '../../../common/types';
 import { IServiceContainer } from '../../../ioc/types';
-import { ITestConfigSettingsService } from '../../types';
-import { UnitTestProduct } from './../types';
+import { ITestConfigSettingsService, UnitTestProduct } from '../types';
 
 @injectable()
 export class TestConfigSettingsService implements ITestConfigSettingsService {
@@ -50,7 +49,7 @@ export class TestConfigSettingsService implements ITestConfigSettingsService {
                 throw new Error('Invalid Test Product');
         }
     }
-    // tslint:disable-next-line:no-any
+
     private async updateSetting(testDirectory: string | Uri, setting: string, value: any) {
         let pythonConfig: WorkspaceConfiguration;
         const resource = typeof testDirectory === 'string' ? Uri.file(testDirectory) : testDirectory;
@@ -59,15 +58,15 @@ export class TestConfigSettingsService implements ITestConfigSettingsService {
         } else if (this.workspaceService.workspaceFolders!.length === 1) {
             pythonConfig = this.workspaceService.getConfiguration(
                 'python',
-                this.workspaceService.workspaceFolders![0].uri
+                this.workspaceService.workspaceFolders![0].uri,
             );
         } else {
             const workspaceFolder = this.workspaceService.getWorkspaceFolder(resource);
             if (!workspaceFolder) {
                 throw new Error(`Test directory does not belong to any workspace (${testDirectory})`);
             }
-            // tslint:disable-next-line:no-non-null-assertion
-            pythonConfig = this.workspaceService.getConfiguration('python', workspaceFolder!.uri);
+
+            pythonConfig = this.workspaceService.getConfiguration('python', workspaceFolder.uri);
         }
 
         return pythonConfig.update(setting, value);

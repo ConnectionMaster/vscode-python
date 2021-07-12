@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
+
 'use strict';
+
 import { inject, injectable } from 'inversify';
 import * as path from 'path';
 import { Uri } from 'vscode';
@@ -14,10 +16,9 @@ export class WebviewPanelProvider implements IWebviewPanelProvider {
     constructor(
         @inject(IDisposableRegistry) private readonly disposableRegistry: IDisposableRegistry,
         @inject(IFileSystem) private readonly fs: IFileSystem,
-        @inject(IExtensionContext) private readonly context: IExtensionContext
+        @inject(IExtensionContext) private readonly context: IExtensionContext,
     ) {}
 
-    // tslint:disable-next-line:no-any
     public async create(options: IWebviewPanelOptions): Promise<IWebviewPanel> {
         // Allow loading resources from the `<extension folder>/tmp` folder when in webiviews.
         // Used by widgets to place files that are not otherwise accessible.

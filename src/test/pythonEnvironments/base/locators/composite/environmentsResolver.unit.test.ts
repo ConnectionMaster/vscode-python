@@ -4,28 +4,46 @@
 import { assert, expect } from 'chai';
 import { cloneDeep } from 'lodash';
 import * as path from 'path';
+import * as sinon from 'sinon';
 import { ImportMock } from 'ts-mock-imports';
-import { EventEmitter } from 'vscode';
+import { EventEmitter, Uri } from 'vscode';
 import { ExecutionResult } from '../../../../../client/common/process/types';
+import { IDisposableRegistry } from '../../../../../client/common/types';
 import { Architecture } from '../../../../../client/common/utils/platform';
-import { PythonEnvInfo, PythonEnvKind } from '../../../../../client/pythonEnvironments/base/info';
+import * as platformApis from '../../../../../client/common/utils/platform';
+import {
+    PythonEnvInfo,
+    PythonEnvKind,
+    PythonEnvSource,
+    PythonVersion,
+    UNKNOWN_PYTHON_VERSION,
+} from '../../../../../client/pythonEnvironments/base/info';
 import { parseVersion } from '../../../../../client/pythonEnvironments/base/info/pythonVersion';
 import { PythonEnvUpdatedEvent } from '../../../../../client/pythonEnvironments/base/locator';
 import { PythonEnvsResolver } from '../../../../../client/pythonEnvironments/base/locators/composite/environmentsResolver';
+import { getEnvs as getEnvsWithUpdates } from '../../../../../client/pythonEnvironments/base/locatorUtils';
 import { PythonEnvsChangedEvent } from '../../../../../client/pythonEnvironments/base/watcher';
 import * as ExternalDep from '../../../../../client/pythonEnvironments/common/externalDependencies';
-import { EnvironmentInfoService } from '../../../../../client/pythonEnvironments/info/environmentInfoService';
+import {
+    getEnvironmentInfoService,
+    IEnvironmentInfoService,
+} from '../../../../../client/pythonEnvironments/info/environmentInfoService';
 import { sleep } from '../../../../core';
+import { TEST_LAYOUT_ROOT } from '../../../common/commonTestConstants';
+import { assertEnvEqual } from '../../../discovery/locators/envTestUtils';
 import { createNamedEnv, getEnvs, SimpleLocator } from '../../common';
 
 suite('Python envs locator - Environments Resolver', () => {
-    let envInfoService: EnvironmentInfoService;
+    let envInfoService: IEnvironmentInfoService;
+    let disposables: IDisposableRegistry;
 
     setup(() => {
-        envInfoService = new EnvironmentInfoService();
+        disposables = [];
+        envInfoService = getEnvironmentInfoService(disposables);
     });
     teardown(() => {
-        envInfoService.dispose();
+        sinon.restore();
+        disposables.forEach((d) => d.dispose());
     });
 
     /**
@@ -110,6 +128,30 @@ suite('Python envs locator - Environments Resolver', () => {
             assert.deepEqual(onUpdatedEvents, expectedUpdates);
         });
 
+        test('If fetching interpreter info fails, it is not reported in the final list of envs', async () => {
+            // Arrange
+            stubShellExec.returns(
+                new Promise<ExecutionResult<string>>((resolve) => {
+                    resolve({
+                        stderr: 'Kaboom',
+                        stdout: '',
+                    });
+                }),
+            );
+            const env1 = createNamedEnv('env1', '3.5.12b1', PythonEnvKind.Unknown, path.join('path', 'to', 'exec1'));
+            const env2 = createNamedEnv('env2', '3.8.1', PythonEnvKind.Unknown, path.join('path', 'to', 'exec2'));
+            const environmentsToBeIterated = [env1, env2];
+            const parentLocator = new SimpleLocator(environmentsToBeIterated);
+            const resolver = new PythonEnvsResolver(parentLocator, envInfoService);
+
+            // Act
+            const iterator = resolver.iterEnvs();
+            const envs = await getEnvsWithUpdates(iterator);
+
+            // Assert
+            assert.deepEqual(envs, []);
+        });
+
         test('Updates to environments from the incoming iterator are sent correctly followed by the null event', async () => {
             // Arrange
             const env = createNamedEnv('env1', '3.8', PythonEnvKind.Unknown, path.join('path', 'to', 'exec'));
@@ -170,7 +212,34 @@ suite('Python envs locator - Environments Resolver', () => {
 
     suite('resolveEnv()', () => {
         let stubShellExec: sinon.SinonStub;
+        const testVirtualHomeDir = path.join(TEST_LAYOUT_ROOT, 'virtualhome');
+        function createExpectedResolvedEnvInfo(
+            interpreterPath: string,
+            kind: PythonEnvKind,
+            version: PythonVersion = UNKNOWN_PYTHON_VERSION,
+            name = '',
+            location = '',
+        ): PythonEnvInfo {
+            return {
+                name,
+                location,
+                kind,
+                executable: {
+                    filename: interpreterPath,
+                    sysPrefix: '',
+                    ctime: -1,
+                    mtime: -1,
+                },
+                display: undefined,
+                version,
+                arch: Architecture.Unknown,
+                distro: { org: '' },
+                searchLocation: Uri.file(path.dirname(location)),
+                source: [PythonEnvSource.Other],
+            };
+        }
         setup(() => {
+            sinon.stub(platformApis, 'getOSType').callsFake(() => platformApis.OSType.Windows);
             stubShellExec = ImportMock.mockFunction(
                 ExternalDep,
                 'shellExecute',
@@ -181,71 +250,56 @@ suite('Python envs locator - Environments Resolver', () => {
                     });
                 }),
             );
+            sinon.stub(ExternalDep, 'getWorkspaceFolders').returns([testVirtualHomeDir]);
         });
 
         teardown(() => {
             stubShellExec.restore();
         });
 
-        test('Calls into parent locator to get resolved environment, then calls environnment service to resolve environment further and return it', async () => {
-            const env = createNamedEnv('env1', '3.8', PythonEnvKind.Unknown, path.join('path', 'to', 'exec'));
-            const resolvedEnvReturnedByReducer = createNamedEnv(
-                'env1',
-                '3.8.1',
-                PythonEnvKind.Conda,
-                'resolved/path/to/exec',
+        test('Calls into basic resolver to get environment info, then calls environnment service to resolve environment further and return it', async () => {
+            const resolvedEnvReturnedByBasicResolver = createExpectedResolvedEnvInfo(
+                path.join(testVirtualHomeDir, '.venvs', 'win1', 'python.exe'),
+                PythonEnvKind.Venv,
+                undefined,
+                'win1',
+                path.join(testVirtualHomeDir, '.venvs', 'win1'),
             );
-            const parentLocator = new SimpleLocator([], {
-                resolve: async (e: PythonEnvInfo) => {
-                    if (e === env) {
-                        return resolvedEnvReturnedByReducer;
-                    }
-                    throw new Error('Incorrect environment sent to the resolver');
-                },
-            });
+            const parentLocator = new SimpleLocator([]);
             const resolver = new PythonEnvsResolver(parentLocator, envInfoService);
 
-            const expected = await resolver.resolveEnv(env);
+            const expected = await resolver.resolveEnv(path.join(testVirtualHomeDir, '.venvs', 'win1', 'python.exe'));
 
-            assert.deepEqual(expected, createExpectedEnvInfo(resolvedEnvReturnedByReducer));
+            assertEnvEqual(expected, createExpectedEnvInfo(resolvedEnvReturnedByBasicResolver));
         });
 
-        test('If the parent locator resolves environment, but fetching interpreter info returns undefined, return undefined', async () => {
+        test('If running interpreter info throws error, return undefined', async () => {
             stubShellExec.returns(
                 new Promise<ExecutionResult<string>>((_resolve, reject) => {
                     reject();
                 }),
             );
-            const env = createNamedEnv('env1', '3.8', PythonEnvKind.Unknown, path.join('path', 'to', 'exec'));
-            const resolvedEnvReturnedByReducer = createNamedEnv(
-                'env1',
-                '3.8.1',
-                PythonEnvKind.Conda,
-                'resolved/path/to/exec',
-            );
-            const parentLocator = new SimpleLocator([], {
-                resolve: async (e: PythonEnvInfo) => {
-                    if (e === env) {
-                        return resolvedEnvReturnedByReducer;
-                    }
-                    throw new Error('Incorrect environment sent to the resolver');
-                },
-            });
+            const parentLocator = new SimpleLocator([]);
             const resolver = new PythonEnvsResolver(parentLocator, envInfoService);
 
-            const expected = await resolver.resolveEnv(env);
+            const expected = await resolver.resolveEnv(path.join(testVirtualHomeDir, '.venvs', 'win1', 'python.exe'));
 
             assert.deepEqual(expected, undefined);
         });
 
-        test("If the parent locator isn't able to resolve environment, return undefined", async () => {
-            const env = createNamedEnv('env', '3.8', PythonEnvKind.Unknown, path.join('path', 'to', 'exec'));
-            const parentLocator = new SimpleLocator([], {
-                resolve: async () => undefined,
-            });
+        test('If fetching interpreter info fails with stderr, return undefined', async () => {
+            stubShellExec.returns(
+                new Promise<ExecutionResult<string>>((resolve) => {
+                    resolve({
+                        stderr: 'Kaboom',
+                        stdout: '',
+                    });
+                }),
+            );
+            const parentLocator = new SimpleLocator([]);
             const resolver = new PythonEnvsResolver(parentLocator, envInfoService);
 
-            const expected = await resolver.resolveEnv(env);
+            const expected = await resolver.resolveEnv(path.join(testVirtualHomeDir, '.venvs', 'win1', 'python.exe'));
 
             assert.deepEqual(expected, undefined);
         });

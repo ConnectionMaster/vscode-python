@@ -8,19 +8,16 @@ import { Uri } from 'vscode';
 import { ApplicationShell } from '../../../client/common/application/applicationShell';
 import { CommandManager } from '../../../client/common/application/commandManager';
 import { IApplicationShell, ICommandManager } from '../../../client/common/application/types';
+import { CommandSource } from '../../../client/common/constants';
 import { FileSystem } from '../../../client/common/platform/fileSystem';
 import { IFileSystem } from '../../../client/common/platform/types';
 import { ServiceContainer } from '../../../client/ioc/container';
 import { IServiceContainer } from '../../../client/ioc/types';
-import { CommandSource } from '../../../client/testing/common/constants';
 import { TestCollectionStorageService } from '../../../client/testing/common/services/storageService';
 import { ITestCollectionStorageService, TestFunction, Tests } from '../../../client/testing/common/types';
 import { TestDisplay } from '../../../client/testing/display/picker';
 import { createEmptyResults } from '../results';
 
-// tslint:disable:no-any
-
-// tslint:disable-next-line: max-func-body-length
 suite('Testing - TestDisplay', () => {
     const wkspace = Uri.file(__dirname);
     let mockedCommandManager: ICommandManager;
@@ -33,8 +30,8 @@ suite('Testing - TestDisplay', () => {
         collectedTests.testFiles = [
             {
                 fullPath: fullpath ? fullpath : 'path/to/testfile',
-                ...anything()
-            }
+                ...anything(),
+            },
         ];
         return collectedTests;
     }
@@ -45,7 +42,7 @@ suite('Testing - TestDisplay', () => {
         mockedTestCollectionStorage = mock(TestCollectionStorageService);
         mockedAppShell = mock(ApplicationShell);
         when(mockedServiceContainer.get<ITestCollectionStorageService>(ITestCollectionStorageService)).thenReturn(
-            instance(mockedTestCollectionStorage)
+            instance(mockedTestCollectionStorage),
         );
         when(mockedServiceContainer.get<IApplicationShell>(IApplicationShell)).thenReturn(instance(mockedAppShell));
 
@@ -56,12 +53,12 @@ suite('Testing - TestDisplay', () => {
         const paths: { [key: string]: any } = {
             match: {
                 fullPath: '/path/to/testfile',
-                fileName: '/path/to/testfile'
+                fileName: '/path/to/testfile',
             },
             mismatch: {
                 fullPath: '/path/to/testfile',
-                fileName: '/testfile/to/path'
-            }
+                fileName: '/testfile/to/path',
+            },
         };
         let tests: Tests;
 
@@ -90,7 +87,7 @@ suite('Testing - TestDisplay', () => {
                 wkspace,
                 'rootDirectory',
                 Uri.file(fileName),
-                codeLensTestFunctions()
+                codeLensTestFunctions(),
             );
 
             verify(mockedAppShell.showQuickPick(anything(), anything())).once();
@@ -105,7 +102,7 @@ suite('Testing - TestDisplay', () => {
                 wkspace,
                 'rootDirectory',
                 Uri.file(fileName),
-                codeLensTestFunctions()
+                codeLensTestFunctions(),
             );
 
             verify(mockedAppShell.showQuickPick(anything(), anything())).never();
@@ -113,7 +110,6 @@ suite('Testing - TestDisplay', () => {
 
         test(`Test that clicking a codelens on parametrized tests opens a dropdown picker on windows (#8627)`, function () {
             if (process.platform !== 'win32') {
-                // tslint:disable-next-line: no-invalid-this
                 this.skip();
             }
             // The error described in #8627 originated from the problem that the casing of the drive letter was different
@@ -126,7 +122,7 @@ suite('Testing - TestDisplay', () => {
                 wkspace,
                 'rootDirectory',
                 Uri.file(fileName),
-                codeLensTestFunctions()
+                codeLensTestFunctions(),
             );
 
             verify(mockedAppShell.showQuickPick(anything(), anything())).once();

@@ -10,8 +10,9 @@ import { TerminalService } from '../../../client/common/terminal/service';
 import { ITerminalActivator, ITerminalHelper, TerminalShellType } from '../../../client/common/terminal/types';
 import { IDisposableRegistry } from '../../../client/common/types';
 import { IServiceContainer } from '../../../client/ioc/types';
+import { ITerminalAutoActivation } from '../../../client/terminals/types';
+import { createPythonInterpreter } from '../../utils/interpreters';
 
-// tslint:disable-next-line:max-func-body-length
 suite('Terminal Service', () => {
     let service: TerminalService;
     let terminal: TypeMoq.IMock<VSCodeTerminal>;
@@ -22,6 +23,7 @@ suite('Terminal Service', () => {
     let workspaceService: TypeMoq.IMock<IWorkspaceService>;
     let disposables: Disposable[] = [];
     let mockServiceContainer: TypeMoq.IMock<IServiceContainer>;
+    let terminalAutoActivator: TypeMoq.IMock<ITerminalAutoActivation>;
     setup(() => {
         terminal = TypeMoq.Mock.ofType<VSCodeTerminal>();
         terminalManager = TypeMoq.Mock.ofType<ITerminalManager>();
@@ -29,6 +31,7 @@ suite('Terminal Service', () => {
         workspaceService = TypeMoq.Mock.ofType<IWorkspaceService>();
         terminalHelper = TypeMoq.Mock.ofType<ITerminalHelper>();
         terminalActivator = TypeMoq.Mock.ofType<ITerminalActivator>();
+        terminalAutoActivator = TypeMoq.Mock.ofType<ITerminalAutoActivation>();
         disposables = [];
 
         mockServiceContainer = TypeMoq.Mock.ofType<IServiceContainer>();
@@ -38,10 +41,10 @@ suite('Terminal Service', () => {
         mockServiceContainer.setup((c) => c.get(IDisposableRegistry)).returns(() => disposables);
         mockServiceContainer.setup((c) => c.get(IWorkspaceService)).returns(() => workspaceService.object);
         mockServiceContainer.setup((c) => c.get(ITerminalActivator)).returns(() => terminalActivator.object);
+        mockServiceContainer.setup((c) => c.get(ITerminalAutoActivation)).returns(() => terminalAutoActivator.object);
     });
     teardown(() => {
         if (service) {
-            // tslint:disable-next-line:no-any
             service.dispose();
         }
         disposables.filter((item) => !!item).forEach((item) => item.dispose());
@@ -97,7 +100,7 @@ suite('Terminal Service', () => {
         terminal.verify((t) => t.show(TypeMoq.It.isValue(true)), TypeMoq.Times.exactly(2));
         terminal.verify(
             (t) => t.sendText(TypeMoq.It.isValue(commandToExpect), TypeMoq.It.isValue(true)),
-            TypeMoq.Times.exactly(1)
+            TypeMoq.Times.exactly(1),
         );
     });
 
@@ -208,7 +211,7 @@ suite('Terminal Service', () => {
             .setup((m) => m.onDidCloseTerminal(TypeMoq.It.isAny(), TypeMoq.It.isAny(), TypeMoq.It.isAny()))
             .returns((handler) => {
                 eventHandler = handler;
-                // tslint:disable-next-line:no-empty
+
                 return { dispose: () => {} };
             });
         service = new TerminalService(mockServiceContainer.object);
@@ -234,7 +237,7 @@ suite('Terminal Service', () => {
             .setup((m) => m.onDidCloseTerminal(TypeMoq.It.isAny(), TypeMoq.It.isAny(), TypeMoq.It.isAny()))
             .returns((handler) => {
                 eventHandler = handler;
-                // tslint:disable-next-line:no-empty
+
                 return { dispose: () => {} };
             });
         service = new TerminalService(mockServiceContainer.object);
@@ -249,5 +252,23 @@ suite('Terminal Service', () => {
         expect(eventHandler).not.to.be.an('undefined', 'event handler not initialized');
         eventHandler!.bind(service)(terminal.object);
         expect(eventFired).to.be.equal(true, 'Event not fired');
+    });
+    test('Ensure to disable auto activation and right interpreter is activated', async () => {
+        const interpreter = createPythonInterpreter({ path: 'abc' });
+        service = new TerminalService(mockServiceContainer.object, { interpreter });
+
+        terminalHelper.setup((h) => h.identifyTerminalShell(TypeMoq.It.isAny())).returns(() => TerminalShellType.bash);
+        terminalManager.setup((t) => t.createTerminal(TypeMoq.It.isAny())).returns(() => terminal.object);
+
+        // This will create the terminal.
+        await service.sendText('blah');
+
+        // Ensure we disable auto activation of the terminal.
+        terminalAutoActivator.verify((t) => t.disableAutoActivation(terminal.object), TypeMoq.Times.once());
+        // Ensure the terminal is activated with the interpreter info.
+        terminalActivator.verify(
+            (t) => t.activateEnvironmentInTerminal(terminal.object, TypeMoq.It.isObjectWith({ interpreter })),
+            TypeMoq.Times.once(),
+        );
     });
 });

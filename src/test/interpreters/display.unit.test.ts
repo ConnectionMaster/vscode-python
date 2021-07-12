@@ -10,7 +10,7 @@ import {
     StatusBarAlignment,
     StatusBarItem,
     Uri,
-    WorkspaceFolder
+    WorkspaceFolder,
 } from 'vscode';
 import { IApplicationShell, IWorkspaceService } from '../../client/common/application/types';
 import { STANDARD_OUTPUT_CHANNEL } from '../../client/common/constants';
@@ -21,7 +21,7 @@ import {
     IOutputChannel,
     IPathUtils,
     IPythonSettings,
-    ReadWrite
+    ReadWrite,
 } from '../../client/common/types';
 import { Interpreters } from '../../client/common/utils/localize';
 import { Architecture } from '../../client/common/utils/platform';
@@ -31,14 +31,11 @@ import {
     IInterpreterDisplay,
     IInterpreterHelper,
     IInterpreterService,
-    IInterpreterStatusbarVisibilityFilter
+    IInterpreterStatusbarVisibilityFilter,
 } from '../../client/interpreter/contracts';
 import { InterpreterDisplay } from '../../client/interpreter/display';
-import { IVirtualEnvironmentManager } from '../../client/interpreter/virtualEnvs/types';
 import { IServiceContainer } from '../../client/ioc/types';
 import { EnvironmentType, PythonEnvironment } from '../../client/pythonEnvironments/info';
-
-// tslint:disable:no-any max-func-body-length
 
 const info: PythonEnvironment = {
     architecture: Architecture.Unknown,
@@ -49,7 +46,7 @@ const info: PythonEnvironment = {
     envType: EnvironmentType.Unknown,
     version: new SemVer('0.0.0-alpha'),
     sysPrefix: '',
-    sysVersion: ''
+    sysVersion: '',
 };
 
 suite('Interpreters Display', () => {
@@ -57,7 +54,6 @@ suite('Interpreters Display', () => {
     let workspaceService: TypeMoq.IMock<IWorkspaceService>;
     let serviceContainer: TypeMoq.IMock<IServiceContainer>;
     let interpreterService: TypeMoq.IMock<IInterpreterService>;
-    let virtualEnvMgr: TypeMoq.IMock<IVirtualEnvironmentManager>;
     let fileSystem: TypeMoq.IMock<IFileSystem>;
     let disposableRegistry: Disposable[];
     let statusBar: TypeMoq.IMock<StatusBarItem>;
@@ -73,7 +69,6 @@ suite('Interpreters Display', () => {
         workspaceService = TypeMoq.Mock.ofType<IWorkspaceService>();
         applicationShell = TypeMoq.Mock.ofType<IApplicationShell>();
         interpreterService = TypeMoq.Mock.ofType<IInterpreterService>();
-        virtualEnvMgr = TypeMoq.Mock.ofType<IVirtualEnvironmentManager>();
         fileSystem = TypeMoq.Mock.ofType<IFileSystem>();
         interpreterHelper = TypeMoq.Mock.ofType<IInterpreterHelper>();
         disposableRegistry = [];
@@ -96,9 +91,6 @@ suite('Interpreters Display', () => {
         serviceContainer
             .setup((c) => c.get(TypeMoq.It.isValue(IInterpreterService)))
             .returns(() => interpreterService.object);
-        serviceContainer
-            .setup((c) => c.get(TypeMoq.It.isValue(IVirtualEnvironmentManager)))
-            .returns(() => virtualEnvMgr.object);
         serviceContainer.setup((c) => c.get(TypeMoq.It.isValue(IFileSystem))).returns(() => fileSystem.object);
         serviceContainer.setup((c) => c.get(TypeMoq.It.isValue(IDisposableRegistry))).returns(() => disposableRegistry);
         serviceContainer
@@ -119,7 +111,8 @@ suite('Interpreters Display', () => {
         createInterpreterDisplay();
     });
     function createInterpreterDisplay(filters: IInterpreterStatusbarVisibilityFilter[] = []) {
-        interpreterDisplay = new InterpreterDisplay(serviceContainer.object, filters);
+        interpreterDisplay = new InterpreterDisplay(serviceContainer.object);
+        filters.forEach((f) => interpreterDisplay.registerVisibilityFilter(f));
     }
     function setupWorkspaceFolder(resource: Uri, workspaceFolder?: Uri) {
         if (workspaceFolder) {
@@ -144,7 +137,7 @@ suite('Interpreters Display', () => {
             ...info,
             displayName: 'Dummy_Display_Name',
             envType: EnvironmentType.Unknown,
-            path: path.join('user', 'development', 'env', 'bin', 'python')
+            path: path.join('user', 'development', 'env', 'bin', 'python'),
         };
         setupWorkspaceFolder(resource, workspaceFolder);
         when(autoSelection.autoSelectInterpreter(anything())).thenResolve();
@@ -168,7 +161,7 @@ suite('Interpreters Display', () => {
             ...info,
             displayName: 'Dummy_Display_Name',
             envType: EnvironmentType.Unknown,
-            path: path.join('user', 'development', 'env', 'bin', 'python')
+            path: path.join('user', 'development', 'env', 'bin', 'python'),
         };
         pathUtils
             .setup((p) => p.getDisplayName(TypeMoq.It.isAny(), TypeMoq.It.isAny()))
@@ -199,7 +192,7 @@ suite('Interpreters Display', () => {
         setupWorkspaceFolder(resource, workspaceFolder);
         const pythonInterpreter: PythonEnvironment = ({
             displayName,
-            path: pythonPath
+            path: pythonPath,
         } as any) as PythonEnvironment;
         interpreterService
             .setup((i) => i.getActiveInterpreter(TypeMoq.It.isValue(workspaceFolder)))
@@ -215,7 +208,7 @@ suite('Interpreters Display', () => {
         const pythonPath = path.join('user', 'development', 'env', 'bin', 'python');
         const workspaceFolder = Uri.file('workspace');
         setupWorkspaceFolder(resource, workspaceFolder);
-        // tslint:disable-next-line:no-any
+
         interpreterService
             .setup((i) => i.getInterpreters(TypeMoq.It.isValue(workspaceFolder)))
             .returns(() => Promise.resolve([{} as any]));
@@ -228,16 +221,13 @@ suite('Interpreters Display', () => {
         interpreterHelper
             .setup((v) => v.getInterpreterInformation(TypeMoq.It.isValue(pythonPath)))
             .returns(() => Promise.resolve(undefined));
-        virtualEnvMgr
-            .setup((v) => v.getEnvironmentName(TypeMoq.It.isValue(pythonPath)))
-            .returns(() => Promise.resolve(''));
 
         await interpreterDisplay.refresh(resource);
 
-        statusBar.verify((s) => (s.color = TypeMoq.It.isValue('yellow')), TypeMoq.Times.once());
+        statusBar.verify((s) => (s.color = TypeMoq.It.isValue('')), TypeMoq.Times.once());
         statusBar.verify(
             (s) => (s.text = TypeMoq.It.isValue('$(alert) Select Python Interpreter')),
-            TypeMoq.Times.once()
+            TypeMoq.Times.once(),
         );
     });
     test('Ensure we try to identify the active workspace when a resource is not provided ', async () => {
@@ -249,12 +239,9 @@ suite('Interpreters Display', () => {
             displayName: 'Dummy_Display_Name',
             envType: EnvironmentType.Unknown,
             companyDisplayName: 'Company Name',
-            path: pythonPath
+            path: pythonPath,
         };
         fileSystem.setup((fs) => fs.fileExists(TypeMoq.It.isAny())).returns(() => Promise.resolve(true));
-        virtualEnvMgr
-            .setup((v) => v.getEnvironmentName(TypeMoq.It.isValue(pythonPath)))
-            .returns(() => Promise.resolve(''));
         interpreterService
             .setup((i) => i.getActiveInterpreter(TypeMoq.It.isValue(resource)))
             .returns(() => Promise.resolve(activeInterpreter))
@@ -281,7 +268,7 @@ suite('Interpreters Display', () => {
                 ...info,
                 displayName: 'Dummy_Display_Name',
                 envType: EnvironmentType.Unknown,
-                path: path.join('user', 'development', 'env', 'bin', 'python')
+                path: path.join('user', 'development', 'env', 'bin', 'python'),
             };
             setupWorkspaceFolder(resource, workspaceFolder);
             when(autoSelection.autoSelectInterpreter(anything())).thenResolve();

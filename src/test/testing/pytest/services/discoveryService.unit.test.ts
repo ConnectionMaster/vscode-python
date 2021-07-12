@@ -3,8 +3,6 @@
 
 'use strict';
 
-// tslint:disable:max-func-body-length
-
 import { expect } from 'chai';
 import { deepEqual, instance, mock, verify, when } from 'ts-mockito';
 import { CancellationTokenSource, Uri } from 'vscode';
@@ -14,22 +12,27 @@ import { PYTEST_PROVIDER } from '../../../../client/testing/common/constants';
 import { TestsDiscoveryService } from '../../../../client/testing/common/services/discovery';
 import { TestsHelper } from '../../../../client/testing/common/testUtils';
 import {
+    IArgumentsService,
     ITestDiscoveryService,
     ITestsHelper,
     TestDiscoveryOptions,
-    Tests
+    TestFilter,
+    Tests,
 } from '../../../../client/testing/common/types';
 import { ArgumentsService } from '../../../../client/testing/pytest/services/argsService';
 import { TestDiscoveryService } from '../../../../client/testing/pytest/services/discoveryService';
-import { IArgumentsService, TestFilter } from '../../../../client/testing/types';
 import { MockOutputChannel } from '../../../mockClasses';
 
-// tslint:disable: no-unnecessary-override no-any
+function fakeTests(fake: string): Tests {
+    return (fake as unknown) as Tests;
+}
+
 suite('Unit Tests - PyTest - Discovery', () => {
     class DiscoveryService extends TestDiscoveryService {
         public buildTestCollectionArgs(options: TestDiscoveryOptions): string[] {
             return super.buildTestCollectionArgs(options);
         }
+
         public discoverTestsInTestDirectory(options: TestDiscoveryOptions): Promise<Tests> {
             return super.discoverTestsInTestDirectory(options);
         }
@@ -44,7 +47,7 @@ suite('Unit Tests - PyTest - Discovery', () => {
         argsService = mock(ArgumentsService);
 
         when(serviceContainer.get<IArgumentsService>(IArgumentsService, PYTEST_PROVIDER)).thenReturn(
-            instance(argsService)
+            instance(argsService),
         );
         when(serviceContainer.get<ITestsHelper>(ITestsHelper)).thenReturn(instance(helper));
         discoveryService = new DiscoveryService(instance(serviceContainer));
@@ -56,10 +59,10 @@ suite('Unit Tests - PyTest - Discovery', () => {
             ignoreCache: true,
             outChannel: new MockOutputChannel('Tests'),
             token: new CancellationTokenSource().token,
-            workspaceFolder: Uri.file(__dirname)
+            workspaceFolder: Uri.file(__dirname),
         };
         const args = ['1', '2', '3'];
-        const discoveredTests = ('Hello World' as any) as Tests;
+        const discoveredTests = fakeTests('Hello World');
         discoveryService.buildTestCollectionArgs = () => args;
         discoveryService.discoverTestsInTestDirectory = () => Promise.resolve(discoveredTests);
         when(argsService.getTestFolders(deepEqual(options.args))).thenReturn([]);
@@ -75,7 +78,7 @@ suite('Unit Tests - PyTest - Discovery', () => {
             ignoreCache: true,
             outChannel: new MockOutputChannel('Tests'),
             token: new CancellationTokenSource().token,
-            workspaceFolder: Uri.file(__dirname)
+            workspaceFolder: Uri.file(__dirname),
         };
         const args = ['1', '2', '3'];
         discoveryService.buildTestCollectionArgs = () => args;
@@ -83,21 +86,21 @@ suite('Unit Tests - PyTest - Discovery', () => {
         discoveryService.discoverTestsInTestDirectory = async (opts) => {
             const dir = opts.args[opts.args.length - 1];
             if (dir === 'a') {
-                return ('Result A' as any) as Tests;
+                return fakeTests('Result A');
             }
             if (dir === 'b') {
-                return ('Result B' as any) as Tests;
+                return fakeTests('Result B');
             }
             throw new Error('Unrecognized directory');
         };
         when(argsService.getTestFolders(deepEqual(options.args))).thenReturn(directories);
-        when(helper.mergeTests(deepEqual([('Result A' as any) as Tests, ('Result B' as any) as Tests]))).thenReturn(
-            'mergedTests' as any
+        when(helper.mergeTests(deepEqual([fakeTests('Result A'), fakeTests('Result B')]))).thenReturn(
+            fakeTests('mergedTests'),
         );
 
         const tests = await discoveryService.discoverTests(options);
 
-        verify(helper.mergeTests(deepEqual([('Result A' as any) as Tests, ('Result B' as any) as Tests]))).once();
+        verify(helper.mergeTests(deepEqual([fakeTests('Result A'), fakeTests('Result B')]))).once();
         expect(tests).equal('mergedTests');
     });
     test('Build collection arguments', async () => {
@@ -107,7 +110,7 @@ suite('Unit Tests - PyTest - Discovery', () => {
             ignoreCache: false,
             outChannel: new MockOutputChannel('Tests'),
             token: new CancellationTokenSource().token,
-            workspaceFolder: Uri.file(__dirname)
+            workspaceFolder: Uri.file(__dirname),
         };
 
         const filteredArgs = options.args;
@@ -126,7 +129,7 @@ suite('Unit Tests - PyTest - Discovery', () => {
             ignoreCache: true,
             outChannel: new MockOutputChannel('Tests'),
             token: new CancellationTokenSource().token,
-            workspaceFolder: Uri.file(__dirname)
+            workspaceFolder: Uri.file(__dirname),
         };
 
         const filteredArgs = options.args;
@@ -145,7 +148,7 @@ suite('Unit Tests - PyTest - Discovery', () => {
             ignoreCache: true,
             outChannel: new MockOutputChannel('Tests'),
             token: new CancellationTokenSource().token,
-            workspaceFolder: Uri.file(__dirname)
+            workspaceFolder: Uri.file(__dirname),
         };
 
         const filteredArgs = options.args;
@@ -164,16 +167,16 @@ suite('Unit Tests - PyTest - Discovery', () => {
             ignoreCache: true,
             outChannel: new MockOutputChannel('Tests'),
             token: new CancellationTokenSource().token,
-            workspaceFolder: Uri.file(__dirname)
+            workspaceFolder: Uri.file(__dirname),
         };
         const expectedDiscoveryArgs = ['discover', 'pytest', '--', ...options.args];
         const discoveryOptions = { ...options };
         discoveryOptions.args = expectedDiscoveryArgs;
 
         const commonDiscoveryService = mock(TestsDiscoveryService);
-        const discoveredTests = ('Hello' as any) as Tests;
+        const discoveredTests = fakeTests('Hello');
         when(serviceContainer.get<ITestDiscoveryService>(ITestDiscoveryService, 'common')).thenReturn(
-            instance(commonDiscoveryService)
+            instance(commonDiscoveryService),
         );
         when(commonDiscoveryService.discoverTests(deepEqual(discoveryOptions))).thenResolve(discoveredTests);
 

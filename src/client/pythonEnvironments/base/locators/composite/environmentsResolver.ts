@@ -8,15 +8,20 @@ import { IEnvironmentInfoService } from '../../../info/environmentInfoService';
 import { PythonEnvInfo } from '../../info';
 import { InterpreterInformation } from '../../info/interpreter';
 import {
-    ILocator, IPythonEnvsIterator, PythonEnvUpdatedEvent, PythonLocatorQuery,
+    ILocator,
+    IPythonEnvsIterator,
+    IResolvingLocator,
+    PythonEnvUpdatedEvent,
+    PythonLocatorQuery,
 } from '../../locator';
 import { PythonEnvsChangedEvent } from '../../watcher';
+import { resolveEnv } from './resolverUtils';
 
 /**
  * Calls environment info service which runs `interpreterInfo.py` script on environments received
  * from the parent locator. Uses information received to populate environments further and pass it on.
  */
-export class PythonEnvsResolver implements ILocator {
+export class PythonEnvsResolver implements IResolvingLocator {
     public get onChanged(): Event<PythonEnvsChangedEvent> {
         return this.parentLocator.onChanged;
     }
@@ -26,16 +31,13 @@ export class PythonEnvsResolver implements ILocator {
         private readonly environmentInfoService: IEnvironmentInfoService,
     ) {}
 
-    public async resolveEnv(env: string | PythonEnvInfo): Promise<PythonEnvInfo | undefined> {
-        const environment = await this.parentLocator.resolveEnv(env);
-        if (!environment) {
+    public async resolveEnv(executablePath: string): Promise<PythonEnvInfo | undefined> {
+        const environment = await resolveEnv(executablePath);
+        const info = await this.environmentInfoService.getEnvironmentInfo(environment.executable.filename);
+        if (!info) {
             return undefined;
         }
-        const interpreterInfo = await this.environmentInfoService.getEnvironmentInfo(environment.executable.filename);
-        if (!interpreterInfo) {
-            return undefined;
-        }
-        return getResolvedEnv(interpreterInfo, environment);
+        return getResolvedEnv(info, environment);
     }
 
     public iterEnvs(query?: PythonLocatorQuery): IPythonEnvsIterator {
@@ -46,7 +48,7 @@ export class PythonEnvsResolver implements ILocator {
         return iterator;
     }
 
-    private async* iterEnvsIterator(
+    private async *iterEnvsIterator(
         iterator: IPythonEnvsIterator,
         didUpdate: EventEmitter<PythonEnvUpdatedEvent | null>,
     ): IPythonEnvsIterator {
@@ -62,11 +64,13 @@ export class PythonEnvsResolver implements ILocator {
                     state.done = true;
                     checkIfFinishedAndNotify(state, didUpdate);
                     listener.dispose();
+                } else if (event.update === undefined) {
+                    throw new Error(
+                        'Unsupported behavior: `undefined` environment updates are not supported from downstream locators in resolver',
+                    );
                 } else if (seen[event.index] !== undefined) {
                     seen[event.index] = event.update;
-                    state.pending += 1;
-                    this.resolveInBackground(event.index, state, didUpdate, seen)
-                        .ignoreErrors();
+                    this.resolveInBackground(event.index, state, didUpdate, seen).ignoreErrors();
                 } else {
                     // This implies a problem in a downstream locator
                     traceVerbose(`Expected already iterated env, got ${event.old} (#${event.index})`);
@@ -79,7 +83,6 @@ export class PythonEnvsResolver implements ILocator {
             const currEnv = result.value;
             seen.push(currEnv);
             yield currEnv;
-            state.pending += 1;
             this.resolveInBackground(seen.indexOf(currEnv), state, didUpdate, seen).ignoreErrors();
             result = await iterator.next();
         }
@@ -95,14 +98,18 @@ export class PythonEnvsResolver implements ILocator {
         didUpdate: EventEmitter<PythonEnvUpdatedEvent | null>,
         seen: PythonEnvInfo[],
     ) {
-        const interpreterInfo = await this.environmentInfoService.getEnvironmentInfo(
-            seen[envIndex].executable.filename,
-        );
-        if (interpreterInfo) {
-            const resolvedEnv = getResolvedEnv(interpreterInfo, seen[envIndex]);
-            const old = seen[envIndex];
+        state.pending += 1;
+        // It's essential we increment the pending call count before any asynchronus calls in this method.
+        // We want this to be run even when `resolveInBackground` is called in background.
+        const info = await this.environmentInfoService.getEnvironmentInfo(seen[envIndex].executable.filename);
+        const old = seen[envIndex];
+        if (info) {
+            const resolvedEnv = getResolvedEnv(info, seen[envIndex]);
             seen[envIndex] = resolvedEnv;
             didUpdate.fire({ old, index: envIndex, update: resolvedEnv });
+        } else {
+            // Send update that the environment is not valid.
+            didUpdate.fire({ old, index: envIndex, update: undefined });
         }
         state.pending -= 1;
         checkIfFinishedAndNotify(state, didUpdate);

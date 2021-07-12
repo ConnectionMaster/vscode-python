@@ -3,13 +3,11 @@
 
 'use strict';
 
-// tslint:disable:no-any
-
 import { expect } from 'chai';
 import * as path from 'path';
 import * as sinon from 'sinon';
 import * as TypeMoq from 'typemoq';
-// tslint:disable-next-line:no-require-imports
+
 import untildify = require('untildify');
 import { WorkspaceConfiguration } from 'vscode';
 import { LanguageServerType } from '../../../client/activation/types';
@@ -23,21 +21,19 @@ import {
     ILoggingSettings,
     ISortImportSettings,
     ITerminalSettings,
-    ITestingSettings,
-    IWorkspaceSymbolSettings
+    IWorkspaceSymbolSettings,
 } from '../../../client/common/types';
 import { noop } from '../../../client/common/utils/misc';
 import * as EnvFileTelemetry from '../../../client/telemetry/envFileTelemetry';
+import { ITestingSettings } from '../../../client/testing/configuration/types';
 import { MockAutoSelectionService } from '../../mocks/autoSelector';
 
-// tslint:disable-next-line:max-func-body-length
 suite('Python Settings', async () => {
     class CustomPythonSettings extends PythonSettings {
-        // tslint:disable-next-line:no-unnecessary-override
         public update(pythonSettings: WorkspaceConfiguration) {
             return super.update(pythonSettings);
         }
-        protected initialize() {
+        public initialize() {
             noop();
         }
     }
@@ -67,17 +63,17 @@ suite('Python Settings', async () => {
             'poetryPath',
             'insidersChannel',
             'defaultInterpreterPath',
-            'jediPath'
+            'jediPath',
         ]) {
             config
                 .setup((c) => c.get<string>(name))
-                // tslint:disable-next-line:no-any
+
                 .returns(() => (sourceSettings as any)[name]);
         }
         for (const name of ['venvFolders']) {
             config
                 .setup((c) => c.get<string[]>(name))
-                // tslint:disable-next-line:no-any
+
                 .returns(() => (sourceSettings as any)[name]);
         }
 
@@ -85,13 +81,13 @@ suite('Python Settings', async () => {
         for (const name of ['downloadLanguageServer', 'autoUpdateLanguageServer']) {
             config
                 .setup((c) => c.get<boolean>(name, true))
-                // tslint:disable-next-line:no-any
+
                 .returns(() => (sourceSettings as any)[name]);
         }
         for (const name of ['disableInstallationCheck', 'globalModuleInstallation']) {
             config
                 .setup((c) => c.get<boolean>(name))
-                // tslint:disable-next-line:no-any
+
                 .returns(() => (sourceSettings as any)[name]);
         }
 
@@ -101,7 +97,7 @@ suite('Python Settings', async () => {
         config.setup((c) => c.get<LanguageServerType>('languageServer')).returns(() => sourceSettings.languageServer);
 
         // "any" settings
-        // tslint:disable-next-line:no-any
+
         config.setup((c) => c.get<any[]>('devOptions')).returns(() => sourceSettings.devOptions);
 
         // complex settings
@@ -141,7 +137,7 @@ suite('Python Settings', async () => {
             'envFile',
             'poetryPath',
             'insidersChannel',
-            'defaultInterpreterPath'
+            'defaultInterpreterPath',
         ].forEach(async (settingName) => {
             testIfValueIsUpdated(settingName, 'stringValue');
         });
@@ -151,7 +147,7 @@ suite('Python Settings', async () => {
         ['downloadLanguageServer', 'autoUpdateLanguageServer', 'globalModuleInstallation'].forEach(
             async (settingName) => {
                 testIfValueIsUpdated(settingName, true);
-            }
+            },
         );
     });
 
@@ -191,7 +187,11 @@ suite('Python Settings', async () => {
         config.verifyAll();
     });
 
-    function testLanguageServer(languageServer: LanguageServerType, expectedValue: LanguageServerType) {
+    function testLanguageServer(
+        languageServer: LanguageServerType,
+        expectedValue: LanguageServerType,
+        isDefault: boolean,
+    ) {
         test(languageServer, () => {
             expected.pythonPath = 'python3';
             expected.languageServer = languageServer;
@@ -204,25 +204,26 @@ suite('Python Settings', async () => {
             settings.update(config.object);
 
             expect(settings.languageServer).to.be.equal(expectedValue);
+            expect(settings.languageServerIsDefault).to.be.equal(isDefault);
             config.verifyAll();
         });
     }
 
     suite('languageServer settings', async () => {
         Object.values(LanguageServerType).forEach(async (languageServer) => {
-            testLanguageServer(languageServer, languageServer);
+            testLanguageServer(languageServer, languageServer, false);
         });
 
-        testLanguageServer('invalid' as LanguageServerType, LanguageServerType.Jedi);
+        testLanguageServer('invalid' as LanguageServerType, LanguageServerType.Jedi, true);
     });
 
     function testExperiments(enabled: boolean) {
         expected.pythonPath = 'python3';
-        // tslint:disable-next-line:no-any
+
         expected.experiments = {
             enabled,
             optInto: [],
-            optOutFrom: []
+            optOutFrom: [],
         };
         initializeConfig(expected);
         config
@@ -233,7 +234,6 @@ suite('Python Settings', async () => {
         settings.update(config.object);
 
         for (const key of Object.keys(expected.experiments)) {
-            // tslint:disable-next-line:no-any
             expect((settings.experiments as any)[key]).to.be.deep.equal((expected.experiments as any)[key]);
         }
         config.verifyAll();
@@ -244,7 +244,7 @@ suite('Python Settings', async () => {
 
     test('Formatter Paths and args', () => {
         expected.pythonPath = 'python3';
-        // tslint:disable-next-line:no-any
+
         expected.formatting = {
             autopep8Args: ['1', '2'],
             autopep8Path: 'one',
@@ -252,7 +252,7 @@ suite('Python Settings', async () => {
             blackPath: 'two',
             yapfArgs: ['5', '6'],
             yapfPath: 'three',
-            provider: ''
+            provider: '',
         };
         expected.formatting.blackPath = 'spam';
         initializeConfig(expected);
@@ -264,14 +264,13 @@ suite('Python Settings', async () => {
         settings.update(config.object);
 
         for (const key of Object.keys(expected.formatting)) {
-            // tslint:disable-next-line:no-any
             expect((settings.formatting as any)[key]).to.be.deep.equal((expected.formatting as any)[key]);
         }
         config.verifyAll();
     });
     test('Formatter Paths (paths relative to home)', () => {
         expected.pythonPath = 'python3';
-        // tslint:disable-next-line:no-any
+
         expected.formatting = {
             autopep8Args: [],
             autopep8Path: path.join('~', 'one'),
@@ -279,7 +278,7 @@ suite('Python Settings', async () => {
             blackPath: path.join('~', 'two'),
             yapfArgs: [],
             yapfPath: path.join('~', 'three'),
-            provider: ''
+            provider: '',
         };
         expected.formatting.blackPath = 'spam';
         initializeConfig(expected);
@@ -294,9 +293,9 @@ suite('Python Settings', async () => {
             if (!key.endsWith('path')) {
                 continue;
             }
-            // tslint:disable-next-line:no-any
+
             const expectedPath = untildify((expected.formatting as any)[key]);
-            // tslint:disable-next-line:no-any
+
             expect((settings.formatting as any)[key]).to.be.equal(expectedPath);
         }
         config.verifyAll();

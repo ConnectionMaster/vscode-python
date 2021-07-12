@@ -9,11 +9,7 @@ import { EventEmitter, Extension, Uri } from 'vscode';
 import { NodeLanguageServerActivator } from '../../../client/activation/node/activator';
 import { NodeLanguageServerManager } from '../../../client/activation/node/manager';
 import { ILanguageServerManager } from '../../../client/activation/types';
-import {
-    IApplicationEnvironment,
-    IApplicationShell,
-    IWorkspaceService
-} from '../../../client/common/application/types';
+import { IApplicationShell, ICommandManager, IWorkspaceService } from '../../../client/common/application/types';
 import { WorkspaceService } from '../../../client/common/application/workspace';
 import { PythonSettings } from '../../../client/common/configSettings';
 import { ConfigurationService } from '../../../client/common/configuration/service';
@@ -21,9 +17,7 @@ import { PYLANCE_EXTENSION_ID } from '../../../client/common/constants';
 import { FileSystem } from '../../../client/common/platform/fileSystem';
 import { IFileSystem } from '../../../client/common/platform/types';
 import { IConfigurationService, IExtensions, IPythonSettings } from '../../../client/common/types';
-import { Common, Pylance } from '../../../client/common/utils/localize';
-
-// tslint:disable:max-func-body-length
+import { Pylance } from '../../../client/common/utils/localize';
 
 suite('Pylance Language Server - Activator', () => {
     let activator: NodeLanguageServerActivator;
@@ -34,10 +28,9 @@ suite('Pylance Language Server - Activator', () => {
     let settings: IPythonSettings;
     let extensions: IExtensions;
     let appShell: IApplicationShell;
-    let appEnv: IApplicationEnvironment;
+    let commandManager: ICommandManager;
     let extensionsChangedEvent: EventEmitter<void>;
 
-    // tslint:disable-next-line: no-any
     let pylanceExtension: Extension<any>;
     setup(() => {
         manager = mock(NodeLanguageServerManager);
@@ -47,13 +40,10 @@ suite('Pylance Language Server - Activator', () => {
         settings = mock(PythonSettings);
         extensions = mock<IExtensions>();
         appShell = mock<IApplicationShell>();
-        appEnv = mock<IApplicationEnvironment>();
-        when(appEnv.uriScheme).thenReturn('scheme');
+        commandManager = mock<ICommandManager>();
 
-        // tslint:disable-next-line: no-any
         pylanceExtension = mock<Extension<any>>();
         when(configuration.getSettings(anything())).thenReturn(instance(settings));
-        when(appEnv.uriScheme).thenReturn('scheme');
 
         extensionsChangedEvent = new EventEmitter<void>();
         when(extensions.onDidChange).thenReturn(extensionsChangedEvent.event);
@@ -65,7 +55,7 @@ suite('Pylance Language Server - Activator', () => {
             instance(configuration),
             instance(extensions),
             instance(appShell),
-            instance(appEnv)
+            instance(commandManager),
         );
     });
     teardown(() => {
@@ -102,40 +92,41 @@ suite('Pylance Language Server - Activator', () => {
     test('When Pylance is not installed activator should show install prompt ', async () => {
         when(
             appShell.showWarningMessage(
-                Pylance.installPylanceMessage(),
-                Common.bannerLabelYes(),
-                Common.bannerLabelNo()
-            )
-        ).thenReturn(Promise.resolve(Common.bannerLabelNo()));
+                Pylance.pylanceRevertToJediPrompt(),
+                Pylance.pylanceInstallPylance(),
+                Pylance.pylanceRevertToJedi(),
+                Pylance.remindMeLater(),
+            ),
+        ).thenReturn(Promise.resolve(Pylance.remindMeLater()));
 
         try {
             await activator.start(undefined);
-            // tslint:disable-next-line: no-empty
         } catch {}
         verify(
             appShell.showWarningMessage(
-                Pylance.installPylanceMessage(),
-                Common.bannerLabelYes(),
-                Common.bannerLabelNo()
-            )
+                Pylance.pylanceRevertToJediPrompt(),
+                Pylance.pylanceInstallPylance(),
+                Pylance.pylanceRevertToJedi(),
+                Pylance.remindMeLater(),
+            ),
         ).once();
-        verify(appShell.openUrl(`scheme:extension/${PYLANCE_EXTENSION_ID}`)).never();
+        verify(commandManager.executeCommand('extension.open', PYLANCE_EXTENSION_ID)).never();
     });
 
     test('When Pylance is not installed activator should open Pylance install page if users clicks Yes', async () => {
         when(
             appShell.showWarningMessage(
-                Pylance.installPylanceMessage(),
-                Common.bannerLabelYes(),
-                Common.bannerLabelNo()
-            )
-        ).thenReturn(Promise.resolve(Common.bannerLabelYes()));
+                Pylance.pylanceRevertToJediPrompt(),
+                Pylance.pylanceInstallPylance(),
+                Pylance.pylanceRevertToJedi(),
+                Pylance.remindMeLater(),
+            ),
+        ).thenReturn(Promise.resolve(Pylance.pylanceInstallPylance()));
 
         try {
             await activator.start(undefined);
-            // tslint:disable-next-line: no-empty
         } catch {}
-        verify(appShell.openUrl(`scheme:extension/${PYLANCE_EXTENSION_ID}`)).once();
+        verify(commandManager.executeCommand('extension.open', PYLANCE_EXTENSION_ID)).once();
     });
 
     test('Activator should throw if Pylance is not installed', async () => {

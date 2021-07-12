@@ -5,15 +5,14 @@
 
 import { inject, injectable } from 'inversify';
 import { ICommandManager } from '../../common/application/types';
-import { Commands } from '../../common/constants';
+import { Commands, CommandSource } from '../../common/constants';
 import { traceDecorators } from '../../common/logger';
 import { IDisposable } from '../../common/types';
 import { swallowExceptions } from '../../common/utils/decorators';
-import { CommandSource } from '../common/constants';
 import { getTestDataItemType } from '../common/testUtils';
 import { TestFile, TestFolder, TestFunction, TestsToRun, TestSuite } from '../common/types';
+import { ITestDataItemResource, TestDataItem, TestDataItemType } from '../common/types';
 import { ITestExplorerCommandHandler } from '../navigation/types';
-import { ITestDataItemResource, TestDataItem, TestDataItemType } from '../types';
 
 type NavigationCommands =
     | typeof Commands.navigateToTestFile
@@ -22,7 +21,7 @@ type NavigationCommands =
 const testNavigationCommandMapping: { [key: string]: NavigationCommands } = {
     [TestDataItemType.file]: Commands.navigateToTestFile,
     [TestDataItemType.function]: Commands.navigateToTestFunction,
-    [TestDataItemType.suite]: Commands.navigateToTestSuite
+    [TestDataItemType.suite]: Commands.navigateToTestSuite,
 };
 
 @injectable()
@@ -30,13 +29,13 @@ export class TestExplorerCommandHandler implements ITestExplorerCommandHandler {
     private readonly disposables: IDisposable[] = [];
     constructor(
         @inject(ICommandManager) private readonly cmdManager: ICommandManager,
-        @inject(ITestDataItemResource) private readonly testResource: ITestDataItemResource
+        @inject(ITestDataItemResource) private readonly testResource: ITestDataItemResource,
     ) {}
     public register(): void {
         this.disposables.push(this.cmdManager.registerCommand(Commands.runTestNode, this.onRunTestNode, this));
         this.disposables.push(this.cmdManager.registerCommand(Commands.debugTestNode, this.onDebugTestNode, this));
         this.disposables.push(
-            this.cmdManager.registerCommand(Commands.openTestNodeInEditor, this.onOpenTestNodeInEditor, this)
+            this.cmdManager.registerCommand(Commands.openTestNodeInEditor, this.onOpenTestNodeInEditor, this),
         );
     }
     public dispose(): void {

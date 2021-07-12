@@ -2,8 +2,6 @@ import { expect } from 'chai';
 import { isHiddenInterpreter } from '../../../../client/pythonEnvironments/discovery/locators/services/interpreterFilter';
 import { EnvironmentType, PythonEnvironment } from '../../../../client/pythonEnvironments/info';
 
-// tslint:disable:no-unused-expression
-
 suite('Interpreters - Filter', () => {
     const doNotHideThesePaths = [
         'python',
@@ -46,13 +44,17 @@ suite('Interpreters - Filter', () => {
     doNotHideThesePaths.forEach((interpreterPath) => {
         test(`Interpreter path should NOT be hidden - ${interpreterPath}`, () => {
             const interpreter: PythonEnvironment = getInterpreterFromPath(interpreterPath);
-            expect(isHiddenInterpreter(interpreter), `${interpreterPath} should NOT be treated as hidden.`).to.be.false;
+
+            expect(isHiddenInterpreter(interpreter), `${interpreterPath} should NOT be treated as hidden.`).to.equal(
+                false,
+            );
         });
     });
     hideThesePaths.forEach((interpreterPath) => {
         test(`Interpreter path should be hidden - ${interpreterPath}`, () => {
             const interpreter: PythonEnvironment = getInterpreterFromPath(interpreterPath);
-            expect(isHiddenInterpreter(interpreter), `${interpreterPath} should be treated as hidden.`).to.be.true;
+
+            expect(isHiddenInterpreter(interpreter), `${interpreterPath} should be treated as hidden.`).to.equal(true);
         });
     });
 });

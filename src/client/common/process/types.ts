@@ -7,7 +7,6 @@ import { CancellationToken, Uri } from 'vscode';
 import { PythonExecInfo } from '../../pythonEnvironments/exec';
 import { InterpreterInformation, PythonEnvironment } from '../../pythonEnvironments/info';
 import { ExecutionInfo, IDisposable } from '../types';
-import { EnvironmentVariables } from '../variables/types';
 
 export const IBufferDecoder = Symbol('IBufferDecoder');
 export interface IBufferDecoder {
@@ -24,7 +23,6 @@ export type ObservableExecutionResult<T extends string | Buffer> = {
     dispose(): void;
 };
 
-// tslint:disable-next-line:interface-name
 export type SpawnOptions = ChildProcessSpawnOptions & {
     encoding?: string;
     token?: CancellationToken;
@@ -33,7 +31,6 @@ export type SpawnOptions = ChildProcessSpawnOptions & {
     extraVariables?: NodeJS.ProcessEnv;
 };
 
-// tslint:disable-next-line:interface-name
 export type ShellOptions = ExecOptions & { throwOnStdErr?: boolean };
 
 export type ExecutionResult<T extends string | Buffer> = {
@@ -82,7 +79,7 @@ export interface IPythonExecutionFactory {
     createCondaExecutionService(
         pythonPath: string,
         processService?: IProcessService,
-        resource?: Uri
+        resource?: Uri,
     ): Promise<IPythonExecutionService | undefined>;
 }
 export const IPythonExecutionService = Symbol('IPythonExecutionService');
@@ -91,6 +88,7 @@ export interface IPythonExecutionService {
     getInterpreterInformation(): Promise<InterpreterInformation | undefined>;
     getExecutablePath(): Promise<string>;
     isModuleInstalled(moduleName: string): Promise<boolean>;
+    getModuleVersion(moduleName: string): Promise<string | undefined>;
     getExecutionInfo(pythonArgs?: string[]): PythonExecInfo;
 
     execObservable(args: string[], options: SpawnOptions): ObservableExecutionResult<string>;
@@ -106,17 +104,13 @@ export class StdErrError extends Error {
     }
 }
 
-export interface IExecutionEnvironmentVariablesService {
-    getEnvironmentVariables(resource?: Uri): Promise<EnvironmentVariables | undefined>;
-}
-
 export const IPythonToolExecutionService = Symbol('IPythonToolRunnerService');
 
 export interface IPythonToolExecutionService {
     execObservable(
         executionInfo: ExecutionInfo,
         options: SpawnOptions,
-        resource: Uri
+        resource: Uri,
     ): Promise<ObservableExecutionResult<string>>;
     exec(executionInfo: ExecutionInfo, options: SpawnOptions, resource: Uri): Promise<ExecutionResult<string>>;
 }

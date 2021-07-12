@@ -5,6 +5,7 @@ import { inject, injectable } from 'inversify';
 import * as path from 'path';
 import { sendTelemetryEvent } from '../../telemetry';
 import { EventName } from '../../telemetry/constants';
+import { traceError } from '../logger';
 import { IFileSystem } from '../platform/types';
 import { IPathUtils } from '../types';
 import { EnvironmentVariables, IEnvironmentVariablesService } from './types';
@@ -15,17 +16,24 @@ export class EnvironmentVariablesService implements IEnvironmentVariablesService
     constructor(
         // We only use a small portion of either of these interfaces.
         @inject(IPathUtils) private readonly pathUtils: IPathUtils,
-        @inject(IFileSystem) private readonly fs: IFileSystem
+        @inject(IFileSystem) private readonly fs: IFileSystem,
     ) {}
 
     public async parseFile(
         filePath?: string,
-        baseVars?: EnvironmentVariables
+        baseVars?: EnvironmentVariables,
     ): Promise<EnvironmentVariables | undefined> {
-        if (!filePath || !(await this.fs.fileExists(filePath))) {
+        if (!filePath || !(await this.fs.pathExists(filePath))) {
             return;
         }
-        return parseEnvFile(await this.fs.readFile(filePath), baseVars);
+        const contents = await this.fs.readFile(filePath).catch((ex) => {
+            traceError('Custom .env is likely not pointing to a valid file', ex);
+            return undefined;
+        });
+        if (!contents) {
+            return;
+        }
+        return parseEnvFile(contents, baseVars);
     }
 
     public mergeVariables(source: EnvironmentVariables, target: EnvironmentVariables) {
@@ -130,7 +138,7 @@ function substituteEnvVars(
     value: string,
     localVars: EnvironmentVariables,
     globalVars: EnvironmentVariables,
-    missing = ''
+    missing = '',
 ): string {
     // Substitution here is inspired a little by dotenv-expand:
     //   https://github.com/motdotla/dotenv-expand/blob/master/lib/main.js

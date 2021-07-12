@@ -4,16 +4,13 @@
 import { expect } from 'chai';
 import { join as pathJoin } from 'path';
 import { SemVer } from 'semver';
-import {
-    IMock, It as TypeMoqIt, Mock, MockBehavior,
-} from 'typemoq';
+import { IMock, It as TypeMoqIt, Mock, MockBehavior } from 'typemoq';
 import { StdErrError } from '../../../client/common/process/types';
 import { Architecture } from '../../../client/common/utils/platform';
 import { buildPythonExecInfo } from '../../../client/pythonEnvironments/exec';
 import { getInterpreterInfo } from '../../../client/pythonEnvironments/info/interpreter';
 import { EXTENSION_ROOT_DIR_FOR_TESTS } from '../../constants';
 
-const isolated = pathJoin(EXTENSION_ROOT_DIR_FOR_TESTS, 'pythonFiles', 'pyvsc-run-isolated.py');
 const script = pathJoin(EXTENSION_ROOT_DIR_FOR_TESTS, 'pythonFiles', 'interpreterInfo.py');
 
 suite('extractInterpreterInfo()', () => {
@@ -43,7 +40,7 @@ suite('getInterpreterInfo()', () => {
             version: '3.7.5rc1 (default, Oct 18 2019, 14:48:48) \n[Clang 11.0.0 (clang-1100.0.33.8)]',
             is64Bit: true,
         };
-        const cmd = `"${python.command}" "${isolated}" "${script}"`;
+        const cmd = `"${python.command}" "${script}"`;
         deps
             // Checking the args is the key point of this test.
             .setup((d) => d.shellExec(cmd, 15000))
@@ -63,7 +60,7 @@ suite('getInterpreterInfo()', () => {
             is64Bit: true,
         };
         const _python = buildPythonExecInfo(' path to /my python ');
-        const cmd = `" path to /my python " "${isolated}" "${script}"`;
+        const cmd = `" path to /my python " "${script}"`;
         deps
             // Checking the args is the key point of this test.
             .setup((d) => d.shellExec(cmd, 15000))
@@ -83,7 +80,7 @@ suite('getInterpreterInfo()', () => {
             is64Bit: true,
         };
         const _python = buildPythonExecInfo(['path/to/conda', 'run', '-n', 'my-env', 'python']);
-        const cmd = `"path/to/conda" "run" "-n" "my-env" "python" "${isolated}" "${script}"`;
+        const cmd = `"path/to/conda" "run" "-n" "my-env" "python" "${script}"`;
         deps
             // Checking the args is the key point of this test.
             .setup((d) => d.shellExec(cmd, 15000))
@@ -99,7 +96,7 @@ suite('getInterpreterInfo()', () => {
         const expected = {
             architecture: Architecture.x64,
             path: python.command,
-            version: new SemVer('3.7.5-candidate'),
+            version: new SemVer('3.7.5-candidate1'),
             sysPrefix: '/path/of/sysprefix/versions/3.7.5rc1',
             sysVersion: undefined,
         };

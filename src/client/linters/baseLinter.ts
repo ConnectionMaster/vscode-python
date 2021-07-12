@@ -14,13 +14,12 @@ import { IServiceContainer } from '../ioc/types';
 import { ErrorHandler } from './errorHandlers/errorHandler';
 import { ILinter, ILinterInfo, ILinterManager, ILintMessage, LinterId, LintMessageSeverity } from './types';
 
-// tslint:disable-next-line:no-require-imports no-var-requires no-any
 const namedRegexp = require('named-js-regexp');
 // Allow negative column numbers (https://github.com/PyCQA/pylint/issues/1822)
 // Allow codes with more than one letter (i.e. ABC123)
 const REGEX = '(?<line>\\d+),(?<column>-?\\d+),(?<type>\\w+),(?<code>\\w+\\d+):(?<message>.*)\\r?(\\n|$)';
 
-export interface IRegexGroup {
+interface IRegexGroup {
     line: number;
     column: number;
     code: string;
@@ -28,7 +27,7 @@ export interface IRegexGroup {
     type: string;
 }
 
-export function matchNamedRegEx(data: string, regex: string): IRegexGroup | undefined {
+function matchNamedRegEx(data: string, regex: string): IRegexGroup | undefined {
     const compiledRegexp = namedRegexp(regex, 'g');
     const rawMatch = compiledRegexp.exec(data);
     if (rawMatch !== null) {
@@ -42,16 +41,15 @@ export function parseLine(
     line: string,
     regex: string,
     linterID: LinterId,
-    colOffset: number = 0
+    colOffset: number = 0,
 ): ILintMessage | undefined {
     const match = matchNamedRegEx(line, regex)!;
     if (!match) {
         return;
     }
 
-    // tslint:disable-next-line:no-any
     match.line = Number(<any>match.line);
-    // tslint:disable-next-line:no-any
+
     match.column = Number(<any>match.column);
 
     return {
@@ -60,7 +58,7 @@ export function parseLine(
         column: isNaN(match.column) || match.column <= 0 ? 0 : match.column - colOffset,
         line: match.line,
         type: match.type,
-        provider: linterID
+        provider: linterID,
     };
 }
 
@@ -80,7 +78,7 @@ export abstract class BaseLinter implements ILinter {
         product: Product,
         protected readonly outputChannel: vscode.OutputChannel,
         protected readonly serviceContainer: IServiceContainer,
-        protected readonly columnOffset = 0
+        protected readonly columnOffset = 0,
     ) {
         this._info = serviceContainer.get<ILinterManager>(ILinterManager).getLinterInfo(product);
         this.errorHandler = new ErrorHandler(this.info.product, outputChannel, serviceContainer);
@@ -103,12 +101,15 @@ export abstract class BaseLinter implements ILinter {
             workspaceFolder && typeof workspaceFolder.uri.fsPath === 'string' ? workspaceFolder.uri.fsPath : undefined;
         return typeof workspaceRootPath === 'string' ? workspaceRootPath : path.dirname(document.uri.fsPath);
     }
+
+    protected getWorkingDirectoryPath(document: vscode.TextDocument): string {
+        return this._pythonSettings.linting.cwd || this.getWorkspaceRootPath(document);
+    }
     protected abstract runLinter(
         document: vscode.TextDocument,
-        cancellation: vscode.CancellationToken
+        cancellation: vscode.CancellationToken,
     ): Promise<ILintMessage[]>;
 
-    // tslint:disable-next-line:no-any
     protected parseMessagesSeverity(error: string, categorySeverity: any): LintMessageSeverity {
         if (categorySeverity[error]) {
             const severityName = categorySeverity[error];
@@ -123,7 +124,6 @@ export abstract class BaseLinter implements ILinter {
                     return LintMessageSeverity.Warning;
                 default: {
                     if (LintMessageSeverity[severityName]) {
-                        // tslint:disable-next-line:no-any
                         return <LintMessageSeverity>(<any>LintMessageSeverity[severityName]);
                     }
                 }
@@ -136,21 +136,21 @@ export abstract class BaseLinter implements ILinter {
         args: string[],
         document: vscode.TextDocument,
         cancellation: vscode.CancellationToken,
-        regEx: string = REGEX
+        regEx: string = REGEX,
     ): Promise<ILintMessage[]> {
         if (!this.info.isEnabled(document.uri)) {
             return [];
         }
         const executionInfo = this.info.getExecutionInfo(args, document.uri);
-        const cwd = this.getWorkspaceRootPath(document);
+        const cwd = this.getWorkingDirectoryPath(document);
         const pythonToolsExecutionService = this.serviceContainer.get<IPythonToolExecutionService>(
-            IPythonToolExecutionService
+            IPythonToolExecutionService,
         );
         try {
             const result = await pythonToolsExecutionService.exec(
                 executionInfo,
                 { cwd, token: cancellation, mergeStdOutErr: false },
-                document.uri
+                document.uri,
             );
             this.displayLinterResultHeader(result.stdout);
             return await this.parseMessages(result.stdout, document, cancellation, regEx);
@@ -164,7 +164,7 @@ export abstract class BaseLinter implements ILinter {
         output: string,
         _document: vscode.TextDocument,
         _token: vscode.CancellationToken,
-        regEx: string
+        regEx: string,
     ) {
         const outputLines = output.splitLines({ removeEmptyEntries: false, trim: false });
         return this.parseLines(outputLines, regEx);

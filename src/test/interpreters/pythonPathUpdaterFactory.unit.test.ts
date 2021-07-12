@@ -2,34 +2,28 @@ import * as path from 'path';
 import * as TypeMoq from 'typemoq';
 import { ConfigurationTarget, Uri, WorkspaceConfiguration } from 'vscode';
 import { IWorkspaceService } from '../../client/common/application/types';
-import { DeprecatePythonPath } from '../../client/common/experiments/groups';
-import { IExperimentsManager, IInterpreterPathService } from '../../client/common/types';
+import { IExperimentService, IInterpreterPathService } from '../../client/common/types';
 import { PythonPathUpdaterServiceFactory } from '../../client/interpreter/configuration/pythonPathUpdaterServiceFactory';
 import { IPythonPathUpdaterServiceFactory } from '../../client/interpreter/configuration/types';
 import { IServiceContainer } from '../../client/ioc/types';
 
-// tslint:disable:no-invalid-template-strings max-func-body-length
-
 suite('Python Path Settings Updater', () => {
     let serviceContainer: TypeMoq.IMock<IServiceContainer>;
     let workspaceService: TypeMoq.IMock<IWorkspaceService>;
-    let experimentsManager: TypeMoq.IMock<IExperimentsManager>;
+    let experimentsManager: TypeMoq.IMock<IExperimentService>;
     let interpreterPathService: TypeMoq.IMock<IInterpreterPathService>;
     let updaterServiceFactory: IPythonPathUpdaterServiceFactory;
     function setupMocks(inExperiment: boolean = false) {
         serviceContainer = TypeMoq.Mock.ofType<IServiceContainer>();
         workspaceService = TypeMoq.Mock.ofType<IWorkspaceService>();
-        experimentsManager = TypeMoq.Mock.ofType<IExperimentsManager>();
-        experimentsManager.setup((e) => e.inExperiment(TypeMoq.It.isAny())).returns(() => inExperiment);
-        experimentsManager
-            .setup((e) => e.sendTelemetryIfInExperiment(DeprecatePythonPath.control))
-            .returns(() => undefined);
+        experimentsManager = TypeMoq.Mock.ofType<IExperimentService>();
+        experimentsManager.setup((e) => e.inExperimentSync(TypeMoq.It.isAny())).returns(() => inExperiment);
         interpreterPathService = TypeMoq.Mock.ofType<IInterpreterPathService>();
         serviceContainer
             .setup((c) => c.get(TypeMoq.It.isValue(IWorkspaceService)))
             .returns(() => workspaceService.object);
         serviceContainer
-            .setup((c) => c.get(TypeMoq.It.isValue(IExperimentsManager)))
+            .setup((c) => c.get(TypeMoq.It.isValue(IExperimentService)))
             .returns(() => experimentsManager.object);
         serviceContainer
             .setup((c) => c.get(TypeMoq.It.isValue(IInterpreterPathService)))
@@ -54,14 +48,13 @@ suite('Python Path Settings Updater', () => {
                 workspaceConfig
                     .setup((w) => w.inspect(TypeMoq.It.isValue('pythonPath')))
                     .returns(() => {
-                        // tslint:disable-next-line:no-any
                         return { globalValue: pythonPath } as any;
                     });
 
                 await updater.updatePythonPath(pythonPath);
                 workspaceConfig.verify(
                     (w) => w.update(TypeMoq.It.isAny(), TypeMoq.It.isAny(), TypeMoq.It.isAny()),
-                    TypeMoq.Times.never()
+                    TypeMoq.Times.never(),
                 );
             });
             test('Python Path should be updated when current pythonPath is different', async () => {
@@ -76,9 +69,9 @@ suite('Python Path Settings Updater', () => {
                         w.update(
                             TypeMoq.It.isValue('pythonPath'),
                             TypeMoq.It.isValue(pythonPath),
-                            TypeMoq.It.isValue(true)
+                            TypeMoq.It.isValue(true),
                         ),
-                    TypeMoq.Times.once()
+                    TypeMoq.Times.once(),
                 );
             });
         });
@@ -94,14 +87,13 @@ suite('Python Path Settings Updater', () => {
                 workspaceConfig
                     .setup((w) => w.inspect(TypeMoq.It.isValue('pythonPath')))
                     .returns(() => {
-                        // tslint:disable-next-line:no-any
                         return { workspaceFolderValue: pythonPath } as any;
                     });
 
                 await updater.updatePythonPath(pythonPath);
                 workspaceConfig.verify(
                     (w) => w.update(TypeMoq.It.isAny(), TypeMoq.It.isAny(), TypeMoq.It.isAny()),
-                    TypeMoq.Times.never()
+                    TypeMoq.Times.never(),
                 );
             });
             test('Python Path should be updated when current pythonPath is different', async () => {
@@ -118,9 +110,9 @@ suite('Python Path Settings Updater', () => {
                         w.update(
                             TypeMoq.It.isValue('pythonPath'),
                             TypeMoq.It.isValue(pythonPath),
-                            TypeMoq.It.isValue(ConfigurationTarget.WorkspaceFolder)
+                            TypeMoq.It.isValue(ConfigurationTarget.WorkspaceFolder),
                         ),
-                    TypeMoq.Times.once()
+                    TypeMoq.Times.once(),
                 );
             });
             test('Python Path should be truncated for worspace-relative paths', async () => {
@@ -138,9 +130,9 @@ suite('Python Path Settings Updater', () => {
                         w.update(
                             TypeMoq.It.isValue('pythonPath'),
                             TypeMoq.It.isValue(expectedPythonPath),
-                            TypeMoq.It.isValue(ConfigurationTarget.WorkspaceFolder)
+                            TypeMoq.It.isValue(ConfigurationTarget.WorkspaceFolder),
                         ),
-                    TypeMoq.Times.once()
+                    TypeMoq.Times.once(),
                 );
             });
         });
@@ -155,14 +147,13 @@ suite('Python Path Settings Updater', () => {
                 workspaceConfig
                     .setup((w) => w.inspect(TypeMoq.It.isValue('pythonPath')))
                     .returns(() => {
-                        // tslint:disable-next-line:no-any
                         return { workspaceValue: pythonPath } as any;
                     });
 
                 await updater.updatePythonPath(pythonPath);
                 workspaceConfig.verify(
                     (w) => w.update(TypeMoq.It.isAny(), TypeMoq.It.isAny(), TypeMoq.It.isAny()),
-                    TypeMoq.Times.never()
+                    TypeMoq.Times.never(),
                 );
             });
             test('Python Path should be updated when current pythonPath is different', async () => {
@@ -179,9 +170,9 @@ suite('Python Path Settings Updater', () => {
                         w.update(
                             TypeMoq.It.isValue('pythonPath'),
                             TypeMoq.It.isValue(pythonPath),
-                            TypeMoq.It.isValue(false)
+                            TypeMoq.It.isValue(false),
                         ),
-                    TypeMoq.Times.once()
+                    TypeMoq.Times.once(),
                 );
             });
             test('Python Path should be truncated for workspace-relative paths', async () => {
@@ -199,9 +190,9 @@ suite('Python Path Settings Updater', () => {
                         w.update(
                             TypeMoq.It.isValue('pythonPath'),
                             TypeMoq.It.isValue(expectedPythonPath),
-                            TypeMoq.It.isValue(false)
+                            TypeMoq.It.isValue(false),
                         ),
-                    TypeMoq.Times.once()
+                    TypeMoq.Times.once(),
                 );
             });
         });
@@ -249,7 +240,7 @@ suite('Python Path Settings Updater', () => {
                 interpreterPathService
                     .setup((i) => i.inspect(workspaceFolder))
                     .returns(() => ({
-                        workspaceFolderValue: pythonPath
+                        workspaceFolderValue: pythonPath,
                     }));
                 interpreterPathService
                     .setup((i) => i.update(workspaceFolder, ConfigurationTarget.WorkspaceFolder, pythonPath))

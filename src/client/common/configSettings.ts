@@ -1,7 +1,8 @@
 'use strict';
 
-import * as child_process from 'child_process';
+// eslint-disable-next-line camelcase
 import * as path from 'path';
+import * as fs from 'fs';
 import {
     ConfigurationChangeEvent,
     ConfigurationTarget,
@@ -10,46 +11,46 @@ import {
     Event,
     EventEmitter,
     Uri,
-    WorkspaceConfiguration
+    WorkspaceConfiguration,
 } from 'vscode';
 import { LanguageServerType } from '../activation/types';
-import '../common/extensions';
-import { IInterpreterAutoSeletionProxyService, IInterpreterSecurityService } from '../interpreter/autoSelection/types';
+import './extensions';
+import { IInterpreterAutoSelectionProxyService } from '../interpreter/autoSelection/types';
 import { LogLevel } from '../logging/levels';
 import { sendTelemetryEvent } from '../telemetry';
 import { EventName } from '../telemetry/constants';
 import { sendSettingTelemetry } from '../telemetry/envFileTelemetry';
+import { ITestingSettings } from '../testing/configuration/types';
 import { IWorkspaceService } from './application/types';
 import { WorkspaceService } from './application/workspace';
 import { DEFAULT_INTERPRETER_SETTING, isTestExecution } from './constants';
 import { DeprecatePythonPath } from './experiments/groups';
 import { ExtensionChannels } from './insidersBuild/types';
 import { IS_WINDOWS } from './platform/constants';
-import * as internalPython from './process/internal/python';
 import {
     IAnalysisSettings,
     IAutoCompleteSettings,
+    IDefaultLanguageServer,
     IExperiments,
-    IExperimentsManager,
+    IExperimentService,
     IFormattingSettings,
     IInterpreterPathService,
     ILintingSettings,
     ILoggingSettings,
     IPythonSettings,
     ISortImportSettings,
+    ITensorBoardSettings,
     ITerminalSettings,
-    ITestingSettings,
     IWorkspaceSymbolSettings,
     LoggingLevelSettingType,
-    Resource
+    Resource,
 } from './types';
 import { debounceSync } from './utils/decorators';
 import { SystemVariables } from './variables/systemVariables';
+import { getOSType, OSType } from './utils/platform';
 
-// tslint:disable:no-require-imports no-var-requires
 const untildify = require('untildify');
 
-// tslint:disable-next-line:completed-docs
 export class PythonSettings implements IPythonSettings {
     public get onDidChange(): Event<void> {
         return this.changed.event;
@@ -58,6 +59,7 @@ export class PythonSettings implements IPythonSettings {
     public get pythonPath(): string {
         return this._pythonPath;
     }
+
     public set pythonPath(value: string) {
         if (this._pythonPath === value) {
             return;
@@ -74,6 +76,7 @@ export class PythonSettings implements IPythonSettings {
     public get defaultInterpreterPath(): string {
         return this._defaultInterpreterPath;
     }
+
     public set defaultInterpreterPath(value: string) {
         if (this._defaultInterpreterPath === value) {
             return;
@@ -86,62 +89,97 @@ export class PythonSettings implements IPythonSettings {
             this._defaultInterpreterPath = value;
         }
     }
+
     private static pythonSettings: Map<string, PythonSettings> = new Map<string, PythonSettings>();
+
     public showStartPage = true;
+
     public downloadLanguageServer = true;
+
     public jediPath = '';
-    public jediMemoryLimit = 1024;
+
+    public jediMemoryLimit = 3072;
+
     public envFile = '';
+
     public venvPath = '';
+
     public venvFolders: string[] = [];
+
     public condaPath = '';
+
     public pipenvPath = '';
+
     public poetryPath = '';
+
     public devOptions: string[] = [];
+
     public linting!: ILintingSettings;
+
     public formatting!: IFormattingSettings;
+
     public autoComplete!: IAutoCompleteSettings;
+
+    public tensorBoard: ITensorBoardSettings | undefined;
+
     public testing!: ITestingSettings;
+
     public terminal!: ITerminalSettings;
+
     public sortImports!: ISortImportSettings;
+
     public workspaceSymbols!: IWorkspaceSymbolSettings;
+
     public disableInstallationChecks = false;
+
     public globalModuleInstallation = false;
+
     public analysis!: IAnalysisSettings;
-    public autoUpdateLanguageServer: boolean = true;
+
+    public autoUpdateLanguageServer = true;
+
     public insidersChannel!: ExtensionChannels;
+
     public experiments!: IExperiments;
+
     public languageServer: LanguageServerType = LanguageServerType.Microsoft;
+
+    public languageServerIsDefault = true;
+
     public logging: ILoggingSettings = { level: LogLevel.Error };
 
     protected readonly changed = new EventEmitter<void>();
+
     private workspaceRoot: Resource;
+
     private disposables: Disposable[] = [];
-    // tslint:disable-next-line:variable-name
+
     private _pythonPath = '';
+
     private _defaultInterpreterPath = '';
+
     private readonly workspace: IWorkspaceService;
 
     constructor(
         workspaceFolder: Resource,
-        private readonly interpreterAutoSelectionService: IInterpreterAutoSeletionProxyService,
+        private readonly interpreterAutoSelectionService: IInterpreterAutoSelectionProxyService,
         workspace?: IWorkspaceService,
-        private readonly experimentsManager?: IExperimentsManager,
+        private readonly experimentsManager?: IExperimentService,
         private readonly interpreterPathService?: IInterpreterPathService,
-        private readonly interpreterSecurityService?: IInterpreterSecurityService
+        private readonly defaultLS?: IDefaultLanguageServer,
     ) {
         this.workspace = workspace || new WorkspaceService();
         this.workspaceRoot = workspaceFolder;
         this.initialize();
     }
-    // tslint:disable-next-line:function-name
+
     public static getInstance(
         resource: Uri | undefined,
-        interpreterAutoSelectionService: IInterpreterAutoSeletionProxyService,
+        interpreterAutoSelectionService: IInterpreterAutoSelectionProxyService,
         workspace?: IWorkspaceService,
-        experimentsManager?: IExperimentsManager,
+        experimentsManager?: IExperimentService,
         interpreterPathService?: IInterpreterPathService,
-        interpreterSecurityService?: IInterpreterSecurityService
+        defaultLS?: IDefaultLanguageServer,
     ): PythonSettings {
         workspace = workspace || new WorkspaceService();
         const workspaceFolderUri = PythonSettings.getSettingsUriAndTarget(resource, workspace).uri;
@@ -154,26 +192,26 @@ export class PythonSettings implements IPythonSettings {
                 workspace,
                 experimentsManager,
                 interpreterPathService,
-                interpreterSecurityService
+                defaultLS,
             );
             PythonSettings.pythonSettings.set(workspaceFolderKey, settings);
             // Pass null to avoid VSC from complaining about not passing in a value.
-            // tslint:disable-next-line:no-any
-            const config = workspace.getConfiguration('editor', resource ? resource : (null as any));
+
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const config = workspace.getConfiguration('editor', resource || (null as any));
             const formatOnType = config ? config.get('formatOnType', false) : false;
             sendTelemetryEvent(EventName.COMPLETION_ADD_BRACKETS, undefined, {
-                enabled: settings.autoComplete ? settings.autoComplete.addBrackets : false
+                enabled: settings.autoComplete ? settings.autoComplete.addBrackets : false,
             });
             sendTelemetryEvent(EventName.FORMAT_ON_TYPE, undefined, { enabled: formatOnType });
         }
-        // tslint:disable-next-line:no-non-null-assertion
+
         return PythonSettings.pythonSettings.get(workspaceFolderKey)!;
     }
 
-    // tslint:disable-next-line:type-literal-delimiter
     public static getSettingsUriAndTarget(
         resource: Uri | undefined,
-        workspace?: IWorkspaceService
+        workspace?: IWorkspaceService,
     ): { uri: Uri | undefined; target: ConfigurationTarget } {
         workspace = workspace || new WorkspaceService();
         const workspaceFolder = resource ? workspace.getWorkspaceFolder(resource) : undefined;
@@ -187,18 +225,17 @@ export class PythonSettings implements IPythonSettings {
         return { uri: workspaceFolderUri, target };
     }
 
-    // tslint:disable-next-line:function-name
-    public static dispose() {
+    public static dispose(): void {
         if (!isTestExecution()) {
             throw new Error('Dispose can only be called from unit tests');
         }
-        // tslint:disable-next-line:no-void-expression
+
         PythonSettings.pythonSettings.forEach((item) => item && item.dispose());
         PythonSettings.pythonSettings.clear();
     }
 
     public static toSerializable(settings: IPythonSettings): IPythonSettings {
-        // tslint:disable-next-line: no-any
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const clone: any = {};
         const keys = Object.entries(settings);
         keys.forEach((e) => {
@@ -211,23 +248,27 @@ export class PythonSettings implements IPythonSettings {
         return clone as IPythonSettings;
     }
 
-    public dispose() {
-        // tslint:disable-next-line:no-unsafe-any
+    public dispose(): void {
         this.disposables.forEach((disposable) => disposable && disposable.dispose());
         this.disposables = [];
     }
-    // tslint:disable-next-line:cyclomatic-complexity max-func-body-length
-    protected update(pythonSettings: WorkspaceConfiguration) {
+
+    protected update(pythonSettings: WorkspaceConfiguration): void {
         const workspaceRoot = this.workspaceRoot?.fsPath;
         const systemVariables: SystemVariables = new SystemVariables(undefined, workspaceRoot, this.workspace);
 
         this.pythonPath = this.getPythonPath(pythonSettings, systemVariables, workspaceRoot);
 
-        // tslint:disable-next-line:no-backbone-get-set-outside-model no-non-null-assertion
         const defaultInterpreterPath = systemVariables.resolveAny(pythonSettings.get<string>('defaultInterpreterPath'));
-        this.defaultInterpreterPath = defaultInterpreterPath ? defaultInterpreterPath : DEFAULT_INTERPRETER_SETTING;
+        this.defaultInterpreterPath = defaultInterpreterPath || DEFAULT_INTERPRETER_SETTING;
+        if (this.defaultInterpreterPath === DEFAULT_INTERPRETER_SETTING) {
+            const autoSelectedPythonInterpreter = this.interpreterAutoSelectionService.getAutoSelectedInterpreter(
+                this.workspaceRoot,
+            );
+            this.defaultInterpreterPath = autoSelectedPythonInterpreter?.path ?? this.defaultInterpreterPath;
+        }
         this.defaultInterpreterPath = getAbsolutePath(this.defaultInterpreterPath, workspaceRoot);
-        // tslint:disable-next-line:no-backbone-get-set-outside-model no-non-null-assertion
+
         this.venvPath = systemVariables.resolveAny(pythonSettings.get<string>('venvPath'))!;
         this.venvFolders = systemVariables.resolveAny(pythonSettings.get<string[]>('venvFolders'))!;
         const condaPath = systemVariables.resolveAny(pythonSettings.get<string>('condaPath'))!;
@@ -238,20 +279,29 @@ export class PythonSettings implements IPythonSettings {
         this.poetryPath = poetryPath && poetryPath.length > 0 ? getAbsolutePath(poetryPath, workspaceRoot) : poetryPath;
 
         this.downloadLanguageServer = systemVariables.resolveAny(
-            pythonSettings.get<boolean>('downloadLanguageServer', true)
+            pythonSettings.get<boolean>('downloadLanguageServer', true),
         )!;
         this.autoUpdateLanguageServer = systemVariables.resolveAny(
-            pythonSettings.get<boolean>('autoUpdateLanguageServer', true)
+            pythonSettings.get<boolean>('autoUpdateLanguageServer', true),
         )!;
 
-        let ls = pythonSettings.get<LanguageServerType>('languageServer') ?? LanguageServerType.Jedi;
-        ls = systemVariables.resolveAny(ls);
-        if (!Object.values(LanguageServerType).includes(ls)) {
-            ls = LanguageServerType.Jedi;
-        }
-        this.languageServer = ls;
+        // Get as a string and verify; don't just accept.
+        let userLS = pythonSettings.get<string>('languageServer');
+        userLS = systemVariables.resolveAny(userLS);
 
-        // tslint:disable-next-line:no-backbone-get-set-outside-model no-non-null-assertion
+        // Validate the user's input; if invalid, set it to the default.
+        if (
+            !userLS ||
+            userLS === 'Default' ||
+            !Object.values(LanguageServerType).includes(userLS as LanguageServerType)
+        ) {
+            this.languageServer = this.defaultLS?.defaultLSType ?? LanguageServerType.Jedi;
+            this.languageServerIsDefault = true;
+        } else {
+            this.languageServer = userLS as LanguageServerType;
+            this.languageServerIsDefault = false;
+        }
+
         this.jediPath = systemVariables.resolveAny(pythonSettings.get<string>('jediPath'))!;
         if (typeof this.jediPath === 'string' && this.jediPath.length > 0) {
             this.jediPath = getAbsolutePath(systemVariables.resolveAny(this.jediPath), workspaceRoot);
@@ -264,12 +314,11 @@ export class PythonSettings implements IPythonSettings {
         this.envFile = systemVariables.resolveAny(envFileSetting)!;
         sendSettingTelemetry(this.workspace, envFileSetting);
 
-        // tslint:disable-next-line:no-any
-        // tslint:disable-next-line:no-backbone-get-set-outside-model no-non-null-assertion no-any
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         this.devOptions = systemVariables.resolveAny(pythonSettings.get<any[]>('devOptions'))!;
         this.devOptions = Array.isArray(this.devOptions) ? this.devOptions : [];
 
-        // tslint:disable-next-line: no-any
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const loggingSettings = systemVariables.resolveAny(pythonSettings.get<any>('logging'))!;
         loggingSettings.level = convertSettingTypeToLogLevel(loggingSettings.level);
         if (this.logging) {
@@ -278,7 +327,6 @@ export class PythonSettings implements IPythonSettings {
             this.logging = loggingSettings;
         }
 
-        // tslint:disable-next-line:no-backbone-get-set-outside-model no-non-null-assertion
         const lintingSettings = systemVariables.resolveAny(pythonSettings.get<ILintingSettings>('linting'))!;
         if (this.linting) {
             Object.assign<ILintingSettings, ILintingSettings>(this.linting, lintingSettings);
@@ -286,7 +334,6 @@ export class PythonSettings implements IPythonSettings {
             this.linting = lintingSettings;
         }
 
-        // tslint:disable-next-line:no-backbone-get-set-outside-model no-non-null-assertion
         const analysisSettings = systemVariables.resolveAny(pythonSettings.get<IAnalysisSettings>('analysis'))!;
         if (this.analysis) {
             Object.assign<IAnalysisSettings, IAnalysisSettings>(this.analysis, analysisSettings);
@@ -297,7 +344,6 @@ export class PythonSettings implements IPythonSettings {
         this.disableInstallationChecks = pythonSettings.get<boolean>('disableInstallationCheck') === true;
         this.globalModuleInstallation = pythonSettings.get<boolean>('globalModuleInstallation') === true;
 
-        // tslint:disable-next-line:no-backbone-get-set-outside-model no-non-null-assertion
         const sortImportSettings = systemVariables.resolveAny(pythonSettings.get<ISortImportSettings>('sortImports'))!;
         if (this.sortImports) {
             Object.assign<ISortImportSettings, ISortImportSettings>(this.sortImports, sortImportSettings);
@@ -311,10 +357,11 @@ export class PythonSettings implements IPythonSettings {
             ? this.linting
             : {
                   enabled: false,
+                  cwd: undefined,
                   ignorePatterns: [],
                   flake8Args: [],
                   flake8Enabled: false,
-                  flake8Path: 'flake',
+                  flake8Path: 'flake8',
                   lintOnSave: false,
                   maxNumberOfProblems: 100,
                   mypyArgs: [],
@@ -343,11 +390,11 @@ export class PythonSettings implements IPythonSettings {
                       error: DiagnosticSeverity.Error,
                       fatal: DiagnosticSeverity.Error,
                       refactor: DiagnosticSeverity.Hint,
-                      warning: DiagnosticSeverity.Warning
+                      warning: DiagnosticSeverity.Warning,
                   },
                   pycodestyleCategorySeverity: {
                       E: DiagnosticSeverity.Error,
-                      W: DiagnosticSeverity.Warning
+                      W: DiagnosticSeverity.Warning,
                   },
                   flake8CategorySeverity: {
                       E: DiagnosticSeverity.Error,
@@ -355,33 +402,36 @@ export class PythonSettings implements IPythonSettings {
                       // Per http://flake8.pycqa.org/en/latest/glossary.html#term-error-code
                       // 'F' does not mean 'fatal as in PyLint but rather 'pyflakes' such as
                       // unused imports, variables, etc.
-                      F: DiagnosticSeverity.Warning
+                      F: DiagnosticSeverity.Warning,
                   },
                   mypyCategorySeverity: {
                       error: DiagnosticSeverity.Error,
-                      note: DiagnosticSeverity.Hint
+                      note: DiagnosticSeverity.Hint,
                   },
-                  pylintUseMinimalCheckers: false
+                  pylintUseMinimalCheckers: false,
               };
         this.linting.pylintPath = getAbsolutePath(systemVariables.resolveAny(this.linting.pylintPath), workspaceRoot);
         this.linting.flake8Path = getAbsolutePath(systemVariables.resolveAny(this.linting.flake8Path), workspaceRoot);
         this.linting.pycodestylePath = getAbsolutePath(
             systemVariables.resolveAny(this.linting.pycodestylePath),
-            workspaceRoot
+            workspaceRoot,
         );
         this.linting.pylamaPath = getAbsolutePath(systemVariables.resolveAny(this.linting.pylamaPath), workspaceRoot);
         this.linting.prospectorPath = getAbsolutePath(
             systemVariables.resolveAny(this.linting.prospectorPath),
-            workspaceRoot
+            workspaceRoot,
         );
         this.linting.pydocstylePath = getAbsolutePath(
             systemVariables.resolveAny(this.linting.pydocstylePath),
-            workspaceRoot
+            workspaceRoot,
         );
         this.linting.mypyPath = getAbsolutePath(systemVariables.resolveAny(this.linting.mypyPath), workspaceRoot);
         this.linting.banditPath = getAbsolutePath(systemVariables.resolveAny(this.linting.banditPath), workspaceRoot);
 
-        // tslint:disable-next-line:no-backbone-get-set-outside-model no-non-null-assertion
+        if (this.linting.cwd) {
+            this.linting.cwd = getAbsolutePath(systemVariables.resolveAny(this.linting.cwd), workspaceRoot);
+        }
+
         const formattingSettings = systemVariables.resolveAny(pythonSettings.get<IFormattingSettings>('formatting'))!;
         if (this.formatting) {
             Object.assign<IFormattingSettings, IFormattingSettings>(this.formatting, formattingSettings);
@@ -398,21 +448,20 @@ export class PythonSettings implements IPythonSettings {
                   blackArgs: [],
                   blackPath: 'black',
                   yapfArgs: [],
-                  yapfPath: 'yapf'
+                  yapfPath: 'yapf',
               };
         this.formatting.autopep8Path = getAbsolutePath(
             systemVariables.resolveAny(this.formatting.autopep8Path),
-            workspaceRoot
+            workspaceRoot,
         );
         this.formatting.yapfPath = getAbsolutePath(systemVariables.resolveAny(this.formatting.yapfPath), workspaceRoot);
         this.formatting.blackPath = getAbsolutePath(
             systemVariables.resolveAny(this.formatting.blackPath),
-            workspaceRoot
+            workspaceRoot,
         );
 
-        // tslint:disable-next-line:no-backbone-get-set-outside-model no-non-null-assertion
         const autoCompleteSettings = systemVariables.resolveAny(
-            pythonSettings.get<IAutoCompleteSettings>('autoComplete')
+            pythonSettings.get<IAutoCompleteSettings>('autoComplete'),
         )!;
         if (this.autoComplete) {
             Object.assign<IAutoCompleteSettings, IAutoCompleteSettings>(this.autoComplete, autoCompleteSettings);
@@ -426,17 +475,16 @@ export class PythonSettings implements IPythonSettings {
                   extraPaths: [],
                   addBrackets: false,
                   showAdvancedMembers: false,
-                  typeshedPaths: []
+                  typeshedPaths: [],
               };
 
-        // tslint:disable-next-line:no-backbone-get-set-outside-model no-non-null-assertion
         const workspaceSymbolsSettings = systemVariables.resolveAny(
-            pythonSettings.get<IWorkspaceSymbolSettings>('workspaceSymbols')
+            pythonSettings.get<IWorkspaceSymbolSettings>('workspaceSymbols'),
         )!;
         if (this.workspaceSymbols) {
             Object.assign<IWorkspaceSymbolSettings, IWorkspaceSymbolSettings>(
                 this.workspaceSymbols,
-                workspaceSymbolsSettings
+                workspaceSymbolsSettings,
             );
         } else {
             this.workspaceSymbols = workspaceSymbolsSettings;
@@ -450,22 +498,19 @@ export class PythonSettings implements IPythonSettings {
                   exclusionPatterns: [],
                   rebuildOnFileSave: true,
                   rebuildOnStart: true,
-                  tagFilePath: workspaceRoot ? path.join(workspaceRoot, 'tags') : ''
+                  tagFilePath: workspaceRoot ? path.join(workspaceRoot, 'tags') : '',
               };
         this.workspaceSymbols.tagFilePath = getAbsolutePath(
             systemVariables.resolveAny(this.workspaceSymbols.tagFilePath),
-            workspaceRoot
+            workspaceRoot,
         );
 
-        // tslint:disable-next-line:no-backbone-get-set-outside-model no-non-null-assertion
         const testSettings = systemVariables.resolveAny(pythonSettings.get<ITestingSettings>('testing'))!;
         if (this.testing) {
             Object.assign<ITestingSettings, ITestingSettings>(this.testing, testSettings);
         } else {
             this.testing = testSettings;
             if (isTestExecution() && !this.testing) {
-                // tslint:disable-next-line:prefer-type-cast
-                // tslint:disable-next-line:no-object-literal-type-assertion
                 this.testing = {
                     nosetestArgs: [],
                     pytestArgs: [],
@@ -477,7 +522,7 @@ export class PythonSettings implements IPythonSettings {
                     unittestEnabled: false,
                     nosetestPath: 'nosetests',
                     pytestPath: 'pytest',
-                    autoTestDiscoverOnSaveEnabled: true
+                    autoTestDiscoverOnSaveEnabled: true,
                 } as ITestingSettings;
             }
         }
@@ -496,12 +541,12 @@ export class PythonSettings implements IPythonSettings {
                   pytestPath: 'pytest',
                   unittestArgs: [],
                   unittestEnabled: false,
-                  autoTestDiscoverOnSaveEnabled: true
+                  autoTestDiscoverOnSaveEnabled: true,
               };
         this.testing.pytestPath = getAbsolutePath(systemVariables.resolveAny(this.testing.pytestPath), workspaceRoot);
         this.testing.nosetestPath = getAbsolutePath(
             systemVariables.resolveAny(this.testing.nosetestPath),
-            workspaceRoot
+            workspaceRoot,
         );
         if (this.testing.cwd) {
             this.testing.cwd = getAbsolutePath(systemVariables.resolveAny(this.testing.cwd), workspaceRoot);
@@ -512,15 +557,12 @@ export class PythonSettings implements IPythonSettings {
         this.testing.pytestArgs = this.testing.pytestArgs.map((arg) => systemVariables.resolveAny(arg));
         this.testing.unittestArgs = this.testing.unittestArgs.map((arg) => systemVariables.resolveAny(arg));
 
-        // tslint:disable-next-line:no-backbone-get-set-outside-model no-non-null-assertion
         const terminalSettings = systemVariables.resolveAny(pythonSettings.get<ITerminalSettings>('terminal'))!;
         if (this.terminal) {
             Object.assign<ITerminalSettings, ITerminalSettings>(this.terminal, terminalSettings);
         } else {
             this.terminal = terminalSettings;
             if (isTestExecution() && !this.terminal) {
-                // tslint:disable-next-line:prefer-type-cast
-                // tslint:disable-next-line:no-object-literal-type-assertion
                 this.terminal = {} as ITerminalSettings;
             }
         }
@@ -531,7 +573,7 @@ export class PythonSettings implements IPythonSettings {
                   executeInFileDir: true,
                   launchArgs: [],
                   activateEnvironment: true,
-                  activateEnvInCurrentTerminal: false
+                  activateEnvInCurrentTerminal: false,
               };
 
         const experiments = systemVariables.resolveAny(pythonSettings.get<IExperiments>('experiments'))!;
@@ -540,12 +582,14 @@ export class PythonSettings implements IPythonSettings {
         } else {
             this.experiments = experiments;
         }
+        // Note we directly access experiment settings using workspace service in ExperimentService class.
+        // Any changes here specific to these settings should propogate their as well.
         this.experiments = this.experiments
             ? this.experiments
             : {
                   enabled: true,
                   optInto: [],
-                  optOutFrom: []
+                  optOutFrom: [],
               };
 
         const showStartPage = pythonSettings.get<boolean>('showStartPage');
@@ -554,13 +598,16 @@ export class PythonSettings implements IPythonSettings {
         }
 
         this.insidersChannel = pythonSettings.get<ExtensionChannels>('insidersChannel')!;
+        this.tensorBoard = pythonSettings.get<ITensorBoardSettings>('tensorBoard');
     }
 
-    protected getPythonExecutable(pythonPath: string) {
+    // eslint-disable-next-line class-methods-use-this
+    protected getPythonExecutable(pythonPath: string): string {
         return getPythonExecutable(pythonPath);
     }
-    protected onWorkspaceFoldersChanged() {
-        //If an activated workspace folder was removed, delete its key
+
+    protected onWorkspaceFoldersChanged(): void {
+        // If an activated workspace folder was removed, delete its key
         const workspaceKeys = this.workspace.workspaceFolders!.map((workspaceFolder) => workspaceFolder.uri.fsPath);
         const activatedWkspcKeys = Array.from(PythonSettings.pythonSettings.keys());
         const activatedWkspcFoldersRemoved = activatedWkspcKeys.filter((item) => workspaceKeys.indexOf(item) < 0);
@@ -570,7 +617,8 @@ export class PythonSettings implements IPythonSettings {
             }
         }
     }
-    protected initialize(): void {
+
+    public initialize(): void {
         const onDidChange = () => {
             const currentConfig = this.workspace.getConfiguration('python', this.workspaceRoot);
             this.update(currentConfig);
@@ -581,17 +629,14 @@ export class PythonSettings implements IPythonSettings {
         };
         this.disposables.push(this.workspace.onDidChangeWorkspaceFolders(this.onWorkspaceFoldersChanged, this));
         this.disposables.push(
-            this.interpreterAutoSelectionService.onDidChangeAutoSelectedInterpreter(onDidChange.bind(this))
+            this.interpreterAutoSelectionService.onDidChangeAutoSelectedInterpreter(onDidChange.bind(this)),
         );
-        if (this.interpreterSecurityService) {
-            this.disposables.push(this.interpreterSecurityService.onDidChangeSafeInterpreters(onDidChange.bind(this)));
-        }
         this.disposables.push(
             this.workspace.onDidChangeConfiguration((event: ConfigurationChangeEvent) => {
                 if (event.affectsConfiguration('python')) {
                     onDidChange();
                 }
-            })
+            }),
         );
         if (this.interpreterPathService) {
             this.disposables.push(this.interpreterPathService.onDidChange(onDidChange.bind(this)));
@@ -602,15 +647,16 @@ export class PythonSettings implements IPythonSettings {
             this.update(initialConfig);
         }
     }
+
     @debounceSync(1)
-    protected debounceChangeNotification() {
+    protected debounceChangeNotification(): void {
         this.changed.fire();
     }
 
     private getPythonPath(
         pythonSettings: WorkspaceConfiguration,
         systemVariables: SystemVariables,
-        workspaceRoot: string | undefined
+        workspaceRoot: string | undefined,
     ) {
         /**
          * Note that while calling `IExperimentsManager.inExperiment()`, we assume `IExperimentsManager.activate()` is already called.
@@ -618,13 +664,12 @@ export class PythonSettings implements IPythonSettings {
          * But we can still use it here for this particular experiment. Reason being that this experiment only changes
          * `pythonPath` setting, and I've checked that `pythonPath` setting is not accessed anywhere in the constructor.
          */
-        const inExperiment = this.experimentsManager?.inExperiment(DeprecatePythonPath.experiment);
-        this.experimentsManager?.sendTelemetryIfInExperiment(DeprecatePythonPath.control);
+        const inExperiment = this.experimentsManager?.inExperimentSync(DeprecatePythonPath.experiment);
         // Use the interpreter path service if in the experiment otherwise use the normal settings
         this.pythonPath = systemVariables.resolveAny(
             inExperiment && this.interpreterPathService
                 ? this.interpreterPathService.get(this.workspaceRoot)
-                : pythonSettings.get<string>('pythonPath')
+                : pythonSettings.get<string>('pythonPath'),
         )!;
         if (
             !process.env.CI_DISABLE_AUTO_SELECTION &&
@@ -632,26 +677,20 @@ export class PythonSettings implements IPythonSettings {
             this.interpreterAutoSelectionService
         ) {
             const autoSelectedPythonInterpreter = this.interpreterAutoSelectionService.getAutoSelectedInterpreter(
-                this.workspaceRoot
+                this.workspaceRoot,
             );
-            if (inExperiment && this.interpreterSecurityService) {
-                if (
-                    autoSelectedPythonInterpreter &&
-                    this.interpreterSecurityService.isSafe(autoSelectedPythonInterpreter) &&
-                    this.workspaceRoot
-                ) {
-                    this.pythonPath = autoSelectedPythonInterpreter.path;
-                    this.interpreterAutoSelectionService
-                        .setWorkspaceInterpreter(this.workspaceRoot, autoSelectedPythonInterpreter)
-                        .ignoreErrors();
-                }
-            } else {
+            if (inExperiment) {
                 if (autoSelectedPythonInterpreter && this.workspaceRoot) {
                     this.pythonPath = autoSelectedPythonInterpreter.path;
                     this.interpreterAutoSelectionService
                         .setWorkspaceInterpreter(this.workspaceRoot, autoSelectedPythonInterpreter)
                         .ignoreErrors();
                 }
+            } else if (autoSelectedPythonInterpreter && this.workspaceRoot) {
+                this.pythonPath = autoSelectedPythonInterpreter.path;
+                this.interpreterAutoSelectionService
+                    .setWorkspaceInterpreter(this.workspaceRoot, autoSelectedPythonInterpreter)
+                    .ignoreErrors();
             }
         }
         if (inExperiment && this.pythonPath === DEFAULT_INTERPRETER_SETTING) {
@@ -667,7 +706,7 @@ function getAbsolutePath(pathToCheck: string, rootDir: string | undefined): stri
     if (!rootDir) {
         rootDir = __dirname;
     }
-    // tslint:disable-next-line:prefer-type-cast no-unsafe-any
+
     pathToCheck = untildify(pathToCheck) as string;
     if (isTestExecution() && !pathToCheck) {
         return rootDir;
@@ -679,7 +718,6 @@ function getAbsolutePath(pathToCheck: string, rootDir: string | undefined): stri
 }
 
 function getPythonExecutable(pythonPath: string): string {
-    // tslint:disable-next-line:prefer-type-cast no-unsafe-any
     pythonPath = untildify(pythonPath) as string;
 
     // If only 'python'.
@@ -695,7 +733,7 @@ function getPythonExecutable(pythonPath: string): string {
         return pythonPath;
     }
     // Keep python right on top, for backwards compatibility.
-    // tslint:disable-next-line:variable-name
+
     const KnownPythonExecutables = [
         'python',
         'python4',
@@ -706,7 +744,7 @@ function getPythonExecutable(pythonPath: string): string {
         'python2',
         'python3.7',
         'python3.8',
-        'python3.9'
+        'python3.9',
     ];
 
     for (let executableName of KnownPythonExecutables) {
@@ -716,8 +754,8 @@ function getPythonExecutable(pythonPath: string): string {
             if (isValidPythonPath(path.join(pythonPath, executableName))) {
                 return path.join(pythonPath, executableName);
             }
-            if (isValidPythonPath(path.join(pythonPath, 'scripts', executableName))) {
-                return path.join(pythonPath, 'scripts', executableName);
+            if (isValidPythonPath(path.join(pythonPath, 'Scripts', executableName))) {
+                return path.join(pythonPath, 'Scripts', executableName);
             }
         } else {
             if (isValidPythonPath(path.join(pythonPath, executableName))) {
@@ -733,13 +771,10 @@ function getPythonExecutable(pythonPath: string): string {
 }
 
 function isValidPythonPath(pythonPath: string): boolean {
-    const [args, parse] = internalPython.isValid();
-    try {
-        const output = child_process.execFileSync(pythonPath, args, { encoding: 'utf8' });
-        return parse(output);
-    } catch (ex) {
-        return false;
-    }
+    return (
+        fs.existsSync(pythonPath) &&
+        path.basename(getOSType() === OSType.Windows ? pythonPath.toLowerCase() : pythonPath).startsWith('python')
+    );
 }
 
 function convertSettingTypeToLogLevel(setting: LoggingLevelSettingType | undefined): LogLevel | 'off' {

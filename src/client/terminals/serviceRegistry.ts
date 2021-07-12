@@ -2,9 +2,8 @@
 // Licensed under the MIT License.
 
 import { interfaces } from 'inversify';
-import { IExtensionSingleActivationService } from '../activation/types';
 import { ClassType } from '../ioc/types';
-import { ExtensionActivationForTerminalActivation, TerminalAutoActivation } from './activation';
+import { TerminalAutoActivation } from './activation';
 import { CodeExecutionManager } from './codeExecution/codeExecutionManager';
 import { DjangoShellCodeExecutionProvider } from './codeExecution/djangoShellCodeExecution';
 import { CodeExecutionHelper } from './codeExecution/helper';
@@ -16,11 +15,11 @@ interface IServiceRegistry {
     addSingleton<T>(
         serviceIdentifier: interfaces.ServiceIdentifier<T>,
         constructor: ClassType<T>,
-        name?: string | number | symbol
+        name?: string | number | symbol,
     ): void;
 }
 
-export function registerTypes(serviceManager: IServiceRegistry) {
+export function registerTypes(serviceManager: IServiceRegistry): void {
     serviceManager.addSingleton<ICodeExecutionHelper>(ICodeExecutionHelper, CodeExecutionHelper);
 
     serviceManager.addSingleton<ICodeExecutionManager>(ICodeExecutionManager, CodeExecutionManager);
@@ -28,19 +27,14 @@ export function registerTypes(serviceManager: IServiceRegistry) {
     serviceManager.addSingleton<ICodeExecutionService>(
         ICodeExecutionService,
         DjangoShellCodeExecutionProvider,
-        'djangoShell'
+        'djangoShell',
     );
     serviceManager.addSingleton<ICodeExecutionService>(
         ICodeExecutionService,
         TerminalCodeExecutionProvider,
-        'standard'
+        'standard',
     );
     serviceManager.addSingleton<ICodeExecutionService>(ICodeExecutionService, ReplProvider, 'repl');
 
     serviceManager.addSingleton<ITerminalAutoActivation>(ITerminalAutoActivation, TerminalAutoActivation);
-
-    serviceManager.addSingleton<IExtensionSingleActivationService>(
-        IExtensionSingleActivationService,
-        ExtensionActivationForTerminalActivation
-    );
 }

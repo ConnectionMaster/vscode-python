@@ -3,8 +3,6 @@
 
 'use strict';
 
-// tslint:disable:max-func-body-length
-
 import { CodeActionKind, debug, DebugConfigurationProvider, languages, OutputChannel, window } from 'vscode';
 
 import { registerTypes as activationRegisterTypes } from './activation/serviceRegistry';
@@ -16,37 +14,28 @@ import { IApplicationEnvironment, ICommandManager, IWorkspaceService } from './c
 import { Commands, PYTHON, PYTHON_LANGUAGE, STANDARD_OUTPUT_CHANNEL, UseProposedApi } from './common/constants';
 import { registerTypes as installerRegisterTypes } from './common/installer/serviceRegistry';
 import { traceError } from './common/logger';
-import { registerTypes as platformRegisterTypes } from './common/platform/serviceRegistry';
 import { IFileSystem } from './common/platform/types';
-import { registerTypes as processRegisterTypes } from './common/process/serviceRegistry';
 import { StartPage } from './common/startPage/startPage';
 import { IStartPage } from './common/startPage/types';
 import {
     IConfigurationService,
     IDisposableRegistry,
-    IExperimentsManager,
-    IFeatureDeprecationManager,
-    IOutputChannel
+    IExperimentService,
+    IExtensions,
+    IOutputChannel,
 } from './common/types';
-import { OutputChannelNames } from './common/utils/localize';
 import { noop } from './common/utils/misc';
-import { registerTypes as variableRegisterTypes } from './common/variables/serviceRegistry';
 import { DebuggerTypeName } from './debugger/constants';
 import { DebugSessionEventDispatcher } from './debugger/extension/hooks/eventHandlerDispatcher';
 import { IDebugSessionEventHandlers } from './debugger/extension/hooks/types';
 import { registerTypes as debugConfigurationRegisterTypes } from './debugger/extension/serviceRegistry';
 import { IDebugConfigurationService, IDebuggerBanner } from './debugger/extension/types';
 import { registerTypes as formattersRegisterTypes } from './formatters/serviceRegistry';
-import {
-    IInterpreterLocatorProgressHandler,
-    IInterpreterLocatorProgressService,
-    IInterpreterService
-} from './interpreter/contracts';
-import { registerTypes as interpretersRegisterTypes } from './interpreter/serviceRegistry';
+import { IInterpreterService } from './interpreter/contracts';
 import { getLanguageConfiguration } from './language/languageConfiguration';
 import { LinterCommands } from './linters/linterCommands';
 import { registerTypes as lintersRegisterTypes } from './linters/serviceRegistry';
-import { addOutputChannelLogging, setLoggingLevel } from './logging';
+import { setLoggingLevel } from './logging';
 import { PythonCodeActionProvider } from './providers/codeActionProvider/pythonCodeActionProvider';
 import { PythonFormattingEditProvider } from './providers/formatProvider';
 import { ReplProvider } from './providers/replProvider';
@@ -58,21 +47,22 @@ import { setExtensionInstallTelemetryProperties } from './telemetry/extensionIns
 import { registerTypes as tensorBoardRegisterTypes } from './tensorBoard/serviceRegistry';
 import { registerTypes as commonRegisterTerminalTypes } from './terminals/serviceRegistry';
 import { ICodeExecutionManager, ITerminalAutoActivation } from './terminals/types';
-import { TEST_OUTPUT_CHANNEL } from './testing/common/constants';
-import { ITestContextService } from './testing/common/types';
 import { ITestCodeNavigatorCommandHandler, ITestExplorerCommandHandler } from './testing/navigation/types';
 import { registerTypes as unitTestsRegisterTypes } from './testing/serviceRegistry';
+import { ITestingService } from './testing/types';
+import { registerTypes as interpretersRegisterTypes } from './interpreter/serviceRegistry';
 
 // components
 import * as pythonEnvironments from './pythonEnvironments';
 
 import { ActivationResult, ExtensionState } from './components';
 import { Components } from './extensionInit';
+import { setDefaultLanguageServer } from './activation/common/defaultlanguageServer';
 
 export async function activateComponents(
     // `ext` is passed to any extra activation funcs.
     ext: ExtensionState,
-    components: Components
+    components: Components,
 ): Promise<ActivationResult[]> {
     // Note that each activation returns a promise that resolves
     // when that activation completes.  However, it might have started
@@ -83,18 +73,24 @@ export async function activateComponents(
     // `Promise.all()`, etc.) will flatten nested promises.  Thus
     // activation resolves `ActivationResult`, which can safely wrap
     // the "inner" promise.
+
+    // TODO: As of now activateLegacy() registers various classes which might
+    // be required while activating components. Once registration from
+    // activateLegacy() are moved before we activate other components, we can
+    // activate them parallelly with the other components.
+    // https://github.com/microsoft/vscode-python/issues/15380
+    // These will go away eventually once everything is refactored into components.
+    const legacyActivationResult = await activateLegacy(ext);
     const promises: Promise<ActivationResult>[] = [
+        // More component activations will go here
         pythonEnvironments.activate(components.pythonEnvs),
-        // These will go away eventually.
-        activateLegacy(ext)
     ];
-    return Promise.all(promises);
+    return Promise.all([legacyActivationResult, ...promises]);
 }
 
-/////////////////////////////
+/// //////////////////////////
 // old activation code
 
-// tslint:disable-next-line:no-suspicious-comment
 // TODO: Gradually move simple initialization
 // and DI registration currently in this function over
 // to initializeComponents().  Likewise with complex
@@ -107,25 +103,16 @@ async function activateLegacy(ext: ExtensionState): Promise<ActivationResult> {
 
     // register "services"
 
-    const standardOutputChannel = window.createOutputChannel(OutputChannelNames.python());
-    addOutputChannelLogging(standardOutputChannel);
-    const unitTestOutChannel = window.createOutputChannel(OutputChannelNames.pythonTest());
-    serviceManager.addSingletonInstance<OutputChannel>(IOutputChannel, standardOutputChannel, STANDARD_OUTPUT_CHANNEL);
-    serviceManager.addSingletonInstance<OutputChannel>(IOutputChannel, unitTestOutChannel, TEST_OUTPUT_CHANNEL);
-
-    // Core registrations (non-feature specific).
-    platformRegisterTypes(serviceManager);
-    processRegisterTypes(serviceManager);
+    const standardOutputChannel = serviceManager.get<IOutputChannel>(IOutputChannel, STANDARD_OUTPUT_CHANNEL);
 
     // We need to setup this property before any telemetry is sent
     const fs = serviceManager.get<IFileSystem>(IFileSystem);
     await setExtensionInstallTelemetryProperties(fs);
 
     const applicationEnv = serviceManager.get<IApplicationEnvironment>(IApplicationEnvironment);
-    const enableProposedApi = applicationEnv.packageJson.enableProposedApi;
+    const { enableProposedApi } = applicationEnv.packageJson;
     serviceManager.addSingletonInstance<boolean>(UseProposedApi, enableProposedApi);
     // Feature specific registrations.
-    variableRegisterTypes(serviceManager);
     unitTestsRegisterTypes(serviceManager);
     lintersRegisterTypes(serviceManager);
     interpretersRegisterTypes(serviceManager);
@@ -135,14 +122,19 @@ async function activateLegacy(ext: ExtensionState): Promise<ActivationResult> {
     debugConfigurationRegisterTypes(serviceManager);
     tensorBoardRegisterTypes(serviceManager);
 
+    const experimentService = serviceContainer.get<IExperimentService>(IExperimentService);
+    // This guarantees that all experiment information has loaded & all telemetry will contain experiment info.
+    await experimentService.activate();
+
+    const workspaceService = serviceContainer.get<IWorkspaceService>(IWorkspaceService);
+    const extensions = serviceContainer.get<IExtensions>(IExtensions);
+    await setDefaultLanguageServer(experimentService, extensions, serviceManager);
+
     const configuration = serviceManager.get<IConfigurationService>(IConfigurationService);
     // We should start logging using the log level as soon as possible, so set it as soon as we can access the level.
     // `IConfigurationService` may depend any of the registered types, so doing it after all registrations are finished.
     // XXX Move this *after* abExperiments is activated?
     setLoggingLevel(configuration.getSettings().logging.level);
-
-    const abExperiments = serviceContainer.get<IExperimentsManager>(IExperimentsManager);
-    await abExperiments.activate();
 
     const languageServerType = configuration.getSettings().languageServer;
 
@@ -168,19 +160,23 @@ async function activateLegacy(ext: ExtensionState): Promise<ActivationResult> {
     cmdManager.registerCommand(Commands.OpenStartPage, () => startPage.open());
     cmdManager.executeCommand('setContext', 'python.vscode.channel', applicationEnv.channel).then(noop, noop);
 
-    // Display progress of interpreter refreshes only after extension has activated.
-    serviceContainer.get<IInterpreterLocatorProgressHandler>(IInterpreterLocatorProgressHandler).register();
-    serviceContainer.get<IInterpreterLocatorProgressService>(IInterpreterLocatorProgressService).register();
     serviceContainer.get<IApplicationDiagnostics>(IApplicationDiagnostics).register();
     serviceContainer.get<ITestCodeNavigatorCommandHandler>(ITestCodeNavigatorCommandHandler).register();
     serviceContainer.get<ITestExplorerCommandHandler>(ITestExplorerCommandHandler).register();
     serviceContainer.get<ILanguageServerExtension>(ILanguageServerExtension).register();
-    serviceContainer.get<ITestContextService>(ITestContextService).register();
+    serviceContainer.get<ITestingService>(ITestingService).register();
 
     // "activate" everything else
 
     const manager = serviceContainer.get<IExtensionActivationManager>(IExtensionActivationManager);
     context.subscriptions.push(manager);
+
+    // Settings are dependent on Experiment service, so we need to initialize it after experiments are activated.
+    serviceContainer.get<IConfigurationService>(IConfigurationService).getSettings().initialize();
+    await interpreterManager
+        .refresh(workspaceService.hasWorkspaceFolders ? workspaceService.workspaceFolders![0].uri : undefined)
+        .catch((ex) => traceError('Python Extension: interpreterManager.refresh', ex));
+
     const activationPromise = manager.activate();
 
     serviceManager.get<ITerminalAutoActivation>(ITerminalAutoActivation).register();
@@ -193,11 +189,6 @@ async function activateLegacy(ext: ExtensionState): Promise<ActivationResult> {
 
     serviceManager.get<ICodeExecutionManager>(ICodeExecutionManager).registerCommands();
 
-    const workspaceService = serviceContainer.get<IWorkspaceService>(IWorkspaceService);
-    interpreterManager
-        .refresh(workspaceService.hasWorkspaceFolders ? workspaceService.workspaceFolders![0].uri : undefined)
-        .catch((ex) => traceError('Python Extension: interpreterManager.refresh', ex));
-
     context.subscriptions.push(new LinterCommands(serviceManager));
 
     languages.setLanguageConfiguration(PYTHON_LANGUAGE, getLanguageConfiguration());
@@ -208,10 +199,6 @@ async function activateLegacy(ext: ExtensionState): Promise<ActivationResult> {
         context.subscriptions.push(languages.registerDocumentRangeFormattingEditProvider(PYTHON, formatProvider));
     }
 
-    const deprecationMgr = serviceContainer.get<IFeatureDeprecationManager>(IFeatureDeprecationManager);
-    deprecationMgr.initialize();
-    context.subscriptions.push(deprecationMgr);
-
     context.subscriptions.push(new ReplProvider(serviceContainer));
 
     const terminalProvider = new TerminalProvider(serviceContainer);
@@ -220,8 +207,8 @@ async function activateLegacy(ext: ExtensionState): Promise<ActivationResult> {
 
     context.subscriptions.push(
         languages.registerCodeActionsProvider(PYTHON, new PythonCodeActionProvider(), {
-            providedCodeActionKinds: [CodeActionKind.SourceOrganizeImports]
-        })
+            providedCodeActionKinds: [CodeActionKind.SourceOrganizeImports],
+        }),
     );
 
     serviceContainer.getAll<DebugConfigurationProvider>(IDebugConfigurationService).forEach((debugConfigProvider) => {

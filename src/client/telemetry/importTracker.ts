@@ -1,5 +1,6 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
+
 'use strict';
 
 import { inject, injectable } from 'inversify';
@@ -11,7 +12,9 @@ import { IExtensionSingleActivationService } from '../activation/types';
 import { IDocumentManager } from '../common/application/types';
 import { isTestExecution } from '../common/constants';
 import '../common/extensions';
+import { IDisposableRegistry } from '../common/types';
 import { noop } from '../common/utils/misc';
+import { TorchProfilerImportRegEx } from '../tensorBoard/helpers';
 import { EventName } from './constants';
 
 /*
@@ -45,16 +48,21 @@ const testExecution = isTestExecution();
 @injectable()
 export class ImportTracker implements IExtensionSingleActivationService {
     private pendingChecks = new Map<string, NodeJS.Timer>();
-    private sentMatches: Set<string> = new Set<string>();
-    // tslint:disable-next-line:no-require-imports
+
+    private static sentMatches: Set<string> = new Set<string>();
+
+    // eslint-disable-next-line global-require
     private hashFn = require('hash.js').sha256;
 
-    constructor(@inject(IDocumentManager) private documentManager: IDocumentManager) {
-        this.documentManager.onDidOpenTextDocument((t) => this.onOpenedOrSavedDocument(t));
-        this.documentManager.onDidSaveTextDocument((t) => this.onOpenedOrSavedDocument(t));
+    constructor(
+        @inject(IDocumentManager) private documentManager: IDocumentManager,
+        @inject(IDisposableRegistry) private disposables: IDisposableRegistry,
+    ) {
+        this.documentManager.onDidOpenTextDocument((t) => this.onOpenedOrSavedDocument(t), this, this.disposables);
+        this.documentManager.onDidSaveTextDocument((t) => this.onOpenedOrSavedDocument(t), this, this.disposables);
     }
 
-    public dispose() {
+    public dispose(): void {
         this.pendingChecks.clear();
     }
 
@@ -63,22 +71,13 @@ export class ImportTracker implements IExtensionSingleActivationService {
         this.documentManager.textDocuments.forEach((d) => this.onOpenedOrSavedDocument(d));
     }
 
-    private getDocumentLines(document: TextDocument): (string | undefined)[] {
-        const array = Array<string>(Math.min(document.lineCount, MAX_DOCUMENT_LINES)).fill('');
-        return array
-            .map((_a: string, i: number) => {
-                const line = document.lineAt(i);
-                if (line && !line.isEmptyOrWhitespace) {
-                    return line.text;
-                }
-                return undefined;
-            })
-            .filter((f: string | undefined) => f);
+    public static hasModuleImport(moduleName: string): boolean {
+        return this.sentMatches.has(moduleName);
     }
 
     private onOpenedOrSavedDocument(document: TextDocument) {
         // Make sure this is a Python file.
-        if (path.extname(document.fileName) === '.py') {
+        if (path.extname(document.fileName).toLowerCase() === '.py') {
             this.scheduleDocument(document);
         }
     }
@@ -108,16 +107,16 @@ export class ImportTracker implements IExtensionSingleActivationService {
     @captureTelemetry(EventName.HASHED_PACKAGE_PERF)
     private checkDocument(document: TextDocument) {
         this.pendingChecks.delete(document.fileName);
-        const lines = this.getDocumentLines(document);
+        const lines = getDocumentLines(document);
         this.lookForImports(lines);
     }
 
     private sendTelemetry(packageName: string) {
         // No need to send duplicate telemetry or waste CPU cycles on an unneeded hash.
-        if (this.sentMatches.has(packageName)) {
+        if (ImportTracker.sentMatches.has(packageName)) {
             return;
         }
-        this.sentMatches.add(packageName);
+        ImportTracker.sentMatches.add(packageName);
         // Hash the package name so that we will never accidentally see a
         // user's private package name.
         const hash = this.hashFn().update(packageName).digest('hex');
@@ -141,10 +140,26 @@ export class ImportTracker implements IExtensionSingleActivationService {
                         packageNames.forEach((p) => this.sendTelemetry(p));
                     }
                 }
+                if (s && TorchProfilerImportRegEx.test(s)) {
+                    sendTelemetryEvent(EventName.TENSORBOARD_TORCH_PROFILER_IMPORT);
+                }
             }
         } catch {
             // Don't care about failures since this is just telemetry.
             noop();
         }
     }
+}
+
+export function getDocumentLines(document: TextDocument): (string | undefined)[] {
+    const array = Array<string>(Math.min(document.lineCount, MAX_DOCUMENT_LINES)).fill('');
+    return array
+        .map((_a: string, i: number) => {
+            const line = document.lineAt(i);
+            if (line && !line.isEmptyOrWhitespace) {
+                return line.text;
+            }
+            return undefined;
+        })
+        .filter((f: string | undefined) => f);
 }

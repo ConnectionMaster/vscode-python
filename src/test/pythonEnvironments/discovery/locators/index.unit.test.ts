@@ -3,8 +3,6 @@
 
 'use strict';
 
-// tslint:disable:max-func-body-length
-
 import { expect } from 'chai';
 import { SemVer } from 'semver';
 import * as TypeMoq from 'typemoq';
@@ -20,7 +18,6 @@ import {
     CONDA_ENV_SERVICE,
     CURRENT_PATH_SERVICE,
     GLOBAL_VIRTUAL_ENV_SERVICE,
-    IComponentAdapter,
     IInterpreterLocatorHelper,
     IInterpreterLocatorService,
     KNOWN_PATH_SERVICE,
@@ -37,13 +34,7 @@ import {
     WorkspaceLocators,
 } from '../../../../client/pythonEnvironments/discovery/locators';
 import { EnvironmentType, PythonEnvironment } from '../../../../client/pythonEnvironments/info';
-import {
-    assertSameEnvs,
-    createLocatedEnv,
-    createNamedEnv,
-    getEnvs,
-    SimpleLocator,
-} from '../../base/common';
+import { assertSameEnvs, createLocatedEnv, createNamedEnv, getEnvs, SimpleLocator } from '../../base/common';
 
 class WorkspaceFolders {
     public added = new EventEmitter<Uri>();
@@ -92,12 +83,7 @@ suite('WorkspaceLocators', () => {
             const env1 = createNamedEnv('foo', '3.8.1', PythonEnvKind.Venv);
             const loc1 = new SimpleLocator([env1]);
             const folders = new WorkspaceFolders([]);
-            const locators = new WorkspaceLocators(
-                folders.getRootsWatcher(),
-                [
-                    () => [loc1],
-                ],
-            );
+            const locators = new WorkspaceLocators(folders.getRootsWatcher(), [() => [loc1]]);
             await ensureActivated(locators);
             const events: PythonEnvsChangedEvent[] = [];
             locators.onChanged((e) => events.push(e));
@@ -149,14 +135,11 @@ suite('WorkspaceLocators', () => {
             const loc5 = new SimpleLocator([]);
             const loc6 = new SimpleLocator([]);
             const folders = new WorkspaceFolders([root1, root2]);
-            const locators = new WorkspaceLocators(
-                folders.getRootsWatcher(),
-                [
-                    (r) => (r === root1 ? [loc1] : [loc2]),
-                    (r) => (r === root1 ? [loc3] : [loc4, loc5]),
-                    (r) => (r === root1 ? [loc6] : []),
-                ],
-            );
+            const locators = new WorkspaceLocators(folders.getRootsWatcher(), [
+                (r) => (r === root1 ? [loc1] : [loc2]),
+                (r) => (r === root1 ? [loc3] : [loc4, loc5]),
+                (r) => (r === root1 ? [loc6] : []),
+            ]);
             await ensureActivated(locators);
             const events: PythonEnvsChangedEvent[] = [];
             locators.onChanged((e) => events.push(e));
@@ -188,9 +171,7 @@ suite('WorkspaceLocators', () => {
 
         test('identifies added roots', async () => {
             const added = Uri.file('baz');
-            const expected: PythonEnvsChangedEvent[] = [
-                { searchLocation: added },
-            ];
+            const expected: PythonEnvsChangedEvent[] = [{ searchLocation: added }];
             const folders = new WorkspaceFolders(['foo', 'bar']);
             const locators = new WorkspaceLocators(folders.getRootsWatcher(), []);
             await ensureActivated(locators);
@@ -207,9 +188,7 @@ suite('WorkspaceLocators', () => {
             const root2 = Uri.file('bar');
             // Force r._formatted to be set.
             [root1, root2].forEach((r) => r.toString());
-            const expected: PythonEnvsChangedEvent[] = [
-                { searchLocation: root2 },
-            ];
+            const expected: PythonEnvsChangedEvent[] = [{ searchLocation: root2 }];
             const folders = new WorkspaceFolders([root1, root2]);
             const locators = new WorkspaceLocators(folders.getRootsWatcher(), []);
             await ensureActivated(locators);
@@ -237,12 +216,7 @@ suite('WorkspaceLocators', () => {
             const loc1 = new SimpleLocator([]);
             const loc2 = new SimpleLocator([]);
             const folders = new WorkspaceFolders([root1, root2]);
-            const locators = new WorkspaceLocators(
-                folders.getRootsWatcher(),
-                [
-                    (r) => (r === root1 ? [loc1] : [loc2]),
-                ],
-            );
+            const locators = new WorkspaceLocators(folders.getRootsWatcher(), [(r) => (r === root1 ? [loc1] : [loc2])]);
             await ensureActivated(locators);
             const events: PythonEnvsChangedEvent[] = [];
             locators.onChanged((e) => events.push(e));
@@ -263,12 +237,7 @@ suite('WorkspaceLocators', () => {
             const env1 = createNamedEnv('foo', '3.8.1', PythonEnvKind.Venv);
             const loc1 = new SimpleLocator([env1]);
             const folders = new WorkspaceFolders([]);
-            const locators = new WorkspaceLocators(
-                folders.getRootsWatcher(),
-                [
-                    () => [loc1],
-                ],
-            );
+            const locators = new WorkspaceLocators(folders.getRootsWatcher(), [() => [loc1]]);
             await ensureActivated(locators);
 
             const iterators = locators.iterEnvs();
@@ -294,12 +263,7 @@ suite('WorkspaceLocators', () => {
             const expected: PythonEnvInfo[] = [];
             const loc1 = new SimpleLocator([]);
             const folders = new WorkspaceFolders([root1]);
-            const locators = new WorkspaceLocators(
-                folders.getRootsWatcher(),
-                [
-                    () => [loc1],
-                ],
-            );
+            const locators = new WorkspaceLocators(folders.getRootsWatcher(), [() => [loc1]]);
             await ensureActivated(locators);
 
             const iterators = locators.iterEnvs();
@@ -314,12 +278,7 @@ suite('WorkspaceLocators', () => {
             const expected: PythonEnvInfo[] = [env1];
             const loc1 = new SimpleLocator([env1]);
             const folders = new WorkspaceFolders([root1]);
-            const locators = new WorkspaceLocators(
-                folders.getRootsWatcher(),
-                [
-                    () => [loc1],
-                ],
-            );
+            const locators = new WorkspaceLocators(folders.getRootsWatcher(), [() => [loc1]]);
             await ensureActivated(locators);
 
             const iterators = locators.iterEnvs();
@@ -337,12 +296,7 @@ suite('WorkspaceLocators', () => {
             const loc2 = new SimpleLocator([], { before: loc1.done });
             const loc3 = new SimpleLocator([env2], { before: loc2.done });
             const folders = new WorkspaceFolders([root1]);
-            const locators = new WorkspaceLocators(
-                folders.getRootsWatcher(),
-                [
-                    () => [loc1, loc2, loc3],
-                ],
-            );
+            const locators = new WorkspaceLocators(folders.getRootsWatcher(), [() => [loc1, loc2, loc3]]);
             await ensureActivated(locators);
 
             const iterators = locators.iterEnvs();
@@ -368,13 +322,10 @@ suite('WorkspaceLocators', () => {
             const loc3 = new SimpleLocator([env5, env6], { before: loc2.done });
             const loc4 = new SimpleLocator([env7, env8], { before: loc3.done });
             const folders = new WorkspaceFolders([root1, root2]);
-            const locators = new WorkspaceLocators(
-                folders.getRootsWatcher(),
-                [
-                    (r) => (r === root1 ? [loc1] : [loc3]),
-                    (r) => (r === root1 ? [loc2] : [loc4]),
-                ],
-            );
+            const locators = new WorkspaceLocators(folders.getRootsWatcher(), [
+                (r) => (r === root1 ? [loc1] : [loc3]),
+                (r) => (r === root1 ? [loc2] : [loc4]),
+            ]);
             await ensureActivated(locators);
 
             const iterators = locators.iterEnvs();
@@ -396,13 +347,10 @@ suite('WorkspaceLocators', () => {
             const loc3 = new SimpleLocator([env3], { before: loc2.done });
             const loc4 = new SimpleLocator([env4], { before: loc3.done });
             const folders = new WorkspaceFolders([root1, root2]);
-            const locators = new WorkspaceLocators(
-                folders.getRootsWatcher(),
-                [
-                    (r) => (r === root1 ? [loc1] : [loc3]),
-                    (r) => (r === root1 ? [loc2] : [loc4]),
-                ],
-            );
+            const locators = new WorkspaceLocators(folders.getRootsWatcher(), [
+                (r) => (r === root1 ? [loc1] : [loc3]),
+                (r) => (r === root1 ? [loc2] : [loc4]),
+            ]);
             await ensureActivated(locators);
             const query = { searchLocations: { roots: [root1] } };
 
@@ -425,13 +373,10 @@ suite('WorkspaceLocators', () => {
             const loc3 = new SimpleLocator([env3], { before: loc2.done });
             const loc4 = new SimpleLocator([env4], { before: loc3.done });
             const folders = new WorkspaceFolders([root1, root2]);
-            const locators = new WorkspaceLocators(
-                folders.getRootsWatcher(),
-                [
-                    (r) => (r === root1 ? [loc1] : [loc3]),
-                    (r) => (r === root1 ? [loc2] : [loc4]),
-                ],
-            );
+            const locators = new WorkspaceLocators(folders.getRootsWatcher(), [
+                (r) => (r === root1 ? [loc1] : [loc3]),
+                (r) => (r === root1 ? [loc2] : [loc4]),
+            ]);
             await ensureActivated(locators);
             const query = { searchLocations: { roots: [root1, root2] } };
 
@@ -453,13 +398,10 @@ suite('WorkspaceLocators', () => {
             const loc3 = new SimpleLocator([env3], { before: loc2.done });
             const loc4 = new SimpleLocator([env4], { before: loc3.done });
             const folders = new WorkspaceFolders([root1, root2]);
-            const locators = new WorkspaceLocators(
-                folders.getRootsWatcher(),
-                [
-                    (r) => (r === root1 ? [loc1] : [loc3]),
-                    (r) => (r === root1 ? [loc2] : [loc4]),
-                ],
-            );
+            const locators = new WorkspaceLocators(folders.getRootsWatcher(), [
+                (r) => (r === root1 ? [loc1] : [loc3]),
+                (r) => (r === root1 ? [loc2] : [loc4]),
+            ]);
             await ensureActivated(locators);
             const query = { searchLocations: { roots: [Uri.file('baz')] } };
 
@@ -482,13 +424,10 @@ suite('WorkspaceLocators', () => {
             const loc3 = new SimpleLocator([env3], { before: loc2.done });
             const loc4 = new SimpleLocator([env4], { before: loc3.done });
             const folders = new WorkspaceFolders([root1, root2]);
-            const locators = new WorkspaceLocators(
-                folders.getRootsWatcher(),
-                [
-                    (r) => (r === root1 ? [loc1] : [loc3]),
-                    (r) => (r === root1 ? [loc2] : [loc4]),
-                ],
-            );
+            const locators = new WorkspaceLocators(folders.getRootsWatcher(), [
+                (r) => (r === root1 ? [loc1] : [loc3]),
+                (r) => (r === root1 ? [loc2] : [loc4]),
+            ]);
             await ensureActivated(locators);
 
             const iterators = locators.iterEnvs({ kinds: [PythonEnvKind.Unknown] });
@@ -514,13 +453,10 @@ suite('WorkspaceLocators', () => {
             const loc2 = new SimpleLocator([env3, env4], { before: loc1.done });
             const loc4 = new SimpleLocator([env7, env8], { before: loc2.done });
             const folders = new WorkspaceFolders([root1, root2]);
-            const locators = new WorkspaceLocators(
-                folders.getRootsWatcher(),
-                [
-                    (r) => (r === root1 ? [loc1] : [loc3]),
-                    (r) => (r === root1 ? [loc2] : [loc4]),
-                ],
-            );
+            const locators = new WorkspaceLocators(folders.getRootsWatcher(), [
+                (r) => (r === root1 ? [loc1] : [loc3]),
+                (r) => (r === root1 ? [loc2] : [loc4]),
+            ]);
             await ensureActivated(locators);
 
             const iterators = locators.iterEnvs();
@@ -569,13 +505,10 @@ suite('WorkspaceLocators', () => {
             const loc3 = new SimpleLocator([env5, env6], { beforeEach, afterEach });
             const loc4 = new SimpleLocator([env7, env8], { beforeEach, afterEach });
             const folders = new WorkspaceFolders([root1, root2]);
-            const locators = new WorkspaceLocators(
-                folders.getRootsWatcher(),
-                [
-                    (r) => (r === root1 ? [loc1] : [loc3]),
-                    (r) => (r === root1 ? [loc2] : [loc4]),
-                ],
-            );
+            const locators = new WorkspaceLocators(folders.getRootsWatcher(), [
+                (r) => (r === root1 ? [loc1] : [loc3]),
+                (r) => (r === root1 ? [loc2] : [loc4]),
+            ]);
             await ensureActivated(locators);
 
             const iterator = locators.iterEnvs();
@@ -601,13 +534,10 @@ suite('WorkspaceLocators', () => {
             const loc3 = new SimpleLocator([env5, env6], { before: loc2.done });
             const loc4 = new SimpleLocator([env7, env8], { before: loc3.done });
             const folders = new WorkspaceFolders([root1, root2]);
-            const locators = new WorkspaceLocators(
-                folders.getRootsWatcher(),
-                [
-                    (r) => (r === root1 ? [loc1] : [loc3]),
-                    (r) => (r === root1 ? [loc2] : [loc4]),
-                ],
-            );
+            const locators = new WorkspaceLocators(folders.getRootsWatcher(), [
+                (r) => (r === root1 ? [loc1] : [loc3]),
+                (r) => (r === root1 ? [loc2] : [loc4]),
+            ]);
 
             const iterator = locators.iterEnvs();
             const envs = await getEnvs(iterator);
@@ -632,13 +562,10 @@ suite('WorkspaceLocators', () => {
             const loc3 = new SimpleLocator([env5, env6], { before: loc2.done });
             const loc4 = new SimpleLocator([env7, env8], { before: loc3.done });
             const folders = new WorkspaceFolders([]);
-            const locators = new WorkspaceLocators(
-                folders.getRootsWatcher(),
-                [
-                    (r) => (r === root1 ? [loc1] : [loc3]),
-                    (r) => (r === root1 ? [loc2] : [loc4]),
-                ],
-            );
+            const locators = new WorkspaceLocators(folders.getRootsWatcher(), [
+                (r) => (r === root1 ? [loc1] : [loc3]),
+                (r) => (r === root1 ? [loc2] : [loc4]),
+            ]);
             await ensureActivated(locators);
 
             const iteratorBefore = locators.iterEnvs();
@@ -670,13 +597,10 @@ suite('WorkspaceLocators', () => {
             const loc3 = new SimpleLocator([env5, env6], { before: loc2.done });
             const loc4 = new SimpleLocator([env7, env8], { before: loc3.done });
             const folders = new WorkspaceFolders([root1, root2]);
-            const locators = new WorkspaceLocators(
-                folders.getRootsWatcher(),
-                [
-                    (r) => (r === root1 ? [loc1] : [loc3]),
-                    (r) => (r === root1 ? [loc2] : [loc4]),
-                ],
-            );
+            const locators = new WorkspaceLocators(folders.getRootsWatcher(), [
+                (r) => (r === root1 ? [loc1] : [loc3]),
+                (r) => (r === root1 ? [loc2] : [loc4]),
+            ]);
             await ensureActivated(locators);
 
             const iteratorBefore = locators.iterEnvs();
@@ -689,237 +613,24 @@ suite('WorkspaceLocators', () => {
             assertSameEnvs(envsAfter, expectedAfter);
         });
     });
-
-    suite('resolveEnv()', () => {
-        function getResolver(seen: number[], id: number, match = true) {
-            return async (env: PythonEnvInfo) => {
-                seen.push(id);
-                return match ? env : undefined;
-            };
-        }
-
-        test('no roots', async () => {
-            const env1 = createNamedEnv('foo', '3.8.1', PythonEnvKind.Venv);
-            const loc1 = new SimpleLocator([env1]);
-            const folders = new WorkspaceFolders([]);
-            const locators = new WorkspaceLocators(
-                folders.getRootsWatcher(),
-                [
-                    () => [loc1],
-                ],
-            );
-            await ensureActivated(locators);
-
-            const resolved = await locators.resolveEnv(env1);
-
-            expect(resolved).to.equal(undefined, 'failed');
-        });
-
-        test('no factories', async () => {
-            const env1 = createNamedEnv('foo', '3.8.1', PythonEnvKind.Venv);
-            const folders = new WorkspaceFolders(['foo', 'bar']);
-            const locators = new WorkspaceLocators(folders.getRootsWatcher(), []);
-            await ensureActivated(locators);
-
-            const resolved = await locators.resolveEnv(env1);
-
-            expect(resolved).to.equal(undefined, 'failed');
-        });
-
-        test('one locator, not resolved', async () => {
-            const root1 = Uri.file('foo');
-            const env1 = createNamedEnv('foo', '3.8.1', PythonEnvKind.Venv);
-            const loc1 = new SimpleLocator([env1], { resolve: null });
-            const folders = new WorkspaceFolders([root1]);
-            const locators = new WorkspaceLocators(
-                folders.getRootsWatcher(),
-                [
-                    () => [loc1],
-                ],
-            );
-            await ensureActivated(locators);
-
-            const resolved = await locators.resolveEnv(env1);
-
-            expect(resolved).to.equal(undefined, 'failed');
-        });
-
-        test('one locator, resolved', async () => {
-            const root1 = Uri.file('foo');
-            const env1 = createNamedEnv('foo', '3.8.1', PythonEnvKind.Venv);
-            const expected = env1;
-            const loc1 = new SimpleLocator([env1]);
-            const folders = new WorkspaceFolders([root1]);
-            const locators = new WorkspaceLocators(
-                folders.getRootsWatcher(),
-                [
-                    () => [loc1],
-                ],
-            );
-            await ensureActivated(locators);
-
-            const resolved = await locators.resolveEnv(env1);
-
-            expect(resolved).to.deep.equal(expected);
-        });
-
-        test('one root, first locator resolves', async () => {
-            const root1 = Uri.file('foo');
-            const env1 = createNamedEnv('foo', '3.8.1', PythonEnvKind.Venv);
-            const expected = env1;
-            const seen: number[] = [];
-            const loc1 = new SimpleLocator([env1], { resolve: getResolver(seen, 1) });
-            const loc2 = new SimpleLocator([], { resolve: getResolver(seen, 2) });
-            const folders = new WorkspaceFolders([root1]);
-            const locators = new WorkspaceLocators(
-                folders.getRootsWatcher(),
-                [
-                    () => [loc1, loc2],
-                ],
-            );
-            await ensureActivated(locators);
-
-            const resolved = await locators.resolveEnv(env1);
-
-            expect(resolved).to.deep.equal(expected);
-            expect(seen).to.deep.equal([1]);
-        });
-
-        test('one root, second locator resolves', async () => {
-            const root1 = Uri.file('foo');
-            const env1 = createNamedEnv('foo', '3.8.1', PythonEnvKind.Venv);
-            const expected = env1;
-            const seen: number[] = [];
-            const loc1 = new SimpleLocator([env1], { resolve: getResolver(seen, 1, false) });
-            const loc2 = new SimpleLocator([], { resolve: getResolver(seen, 2) });
-            const folders = new WorkspaceFolders([root1]);
-            const locators = new WorkspaceLocators(
-                folders.getRootsWatcher(),
-                [
-                    () => [loc1, loc2],
-                ],
-            );
-            await ensureActivated(locators);
-
-            const resolved = await locators.resolveEnv(env1);
-
-            expect(resolved).to.deep.equal(expected);
-            expect(seen).to.deep.equal([1, 2]);
-        });
-
-        test('one root, not resolved', async () => {
-            const root1 = Uri.file('foo');
-            const env1 = createNamedEnv('foo', '3.8.1', PythonEnvKind.Venv);
-            const seen: number[] = [];
-            const loc1 = new SimpleLocator([env1], { resolve: getResolver(seen, 1, false) });
-            const loc2 = new SimpleLocator([], { resolve: getResolver(seen, 2, false) });
-            const folders = new WorkspaceFolders([root1]);
-            const locators = new WorkspaceLocators(
-                folders.getRootsWatcher(),
-                [
-                    () => [loc1, loc2],
-                ],
-            );
-            await ensureActivated(locators);
-
-            const resolved = await locators.resolveEnv(env1);
-
-            expect(resolved).to.equal(undefined, 'failed');
-            expect(seen).to.deep.equal([1, 2]);
-        });
-
-        test('many roots, no searchLocation, second root matches', async () => {
-            const root1 = Uri.file('foo');
-            const root2 = Uri.file('bar');
-            const env1 = createNamedEnv('foo', '3.8.1', PythonEnvKind.Venv);
-            const expected = env1;
-            const seen: number[] = [];
-            const loc1 = new SimpleLocator([env1], { resolve: getResolver(seen, 1, false) });
-            const loc2 = new SimpleLocator([], { resolve: getResolver(seen, 2) });
-            const folders = new WorkspaceFolders([root1, root2]);
-            const locators = new WorkspaceLocators(
-                folders.getRootsWatcher(),
-                [
-                    (r) => (r === root1 ? [loc1] : [loc2]),
-                ],
-            );
-            await ensureActivated(locators);
-
-            const resolved = await locators.resolveEnv(env1);
-
-            expect(resolved).to.deep.equal(expected);
-            expect(seen).to.deep.equal([1, 2]);
-        });
-
-        test('many roots, searchLocation matches', async () => {
-            const root1 = Uri.file('foo');
-            const root2 = Uri.file('bar');
-            const env1 = createNamedEnv('foo', '3.8.1', PythonEnvKind.Venv);
-            env1.searchLocation = root2;
-            const expected = env1;
-            const seen: number[] = [];
-            const loc1 = new SimpleLocator([], { resolve: getResolver(seen, 1) });
-            const loc2 = new SimpleLocator([], { resolve: getResolver(seen, 2) });
-            const folders = new WorkspaceFolders([root1, root2]);
-            const locators = new WorkspaceLocators(
-                folders.getRootsWatcher(),
-                [
-                    (r) => (r === root1 ? [loc1] : [loc2]),
-                ],
-            );
-            await ensureActivated(locators);
-
-            const resolved = await locators.resolveEnv(env1);
-
-            expect(resolved).to.deep.equal(expected);
-            expect(seen).to.deep.equal([2]);
-        });
-
-        test('many roots, searchLocation does not match', async () => {
-            const root1 = Uri.file('foo');
-            const root2 = Uri.file('bar');
-            const env1 = createNamedEnv('foo', '3.8.1', PythonEnvKind.Venv);
-            env1.searchLocation = Uri.file('baz');
-            const expected = env1;
-            const seen: number[] = [];
-            const loc1 = new SimpleLocator([env1], { resolve: getResolver(seen, 1) });
-            const loc2 = new SimpleLocator([], { resolve: getResolver(seen, 2) });
-            const folders = new WorkspaceFolders([root1, root2]);
-            const locators = new WorkspaceLocators(
-                folders.getRootsWatcher(),
-                [
-                    (r) => (r === root1 ? [loc1] : [loc2]),
-                ],
-            );
-            await ensureActivated(locators);
-
-            const resolved = await locators.resolveEnv(env1);
-
-            expect(resolved).to.equal(expected);
-            expect(seen).to.deep.equal([1]);
-        });
-    });
 });
 
 suite('Interpreters - Locators Index', () => {
     let serviceContainer: TypeMoq.IMock<IServiceContainer>;
     let platformSvc: TypeMoq.IMock<IPlatformService>;
     let helper: TypeMoq.IMock<IInterpreterLocatorHelper>;
-    let pyenvs: TypeMoq.IMock<IComponentAdapter>;
     let locator: IInterpreterLocatorService;
     setup(() => {
         serviceContainer = TypeMoq.Mock.ofType<IServiceContainer>();
         platformSvc = TypeMoq.Mock.ofType<IPlatformService>();
         helper = TypeMoq.Mock.ofType<IInterpreterLocatorHelper>();
-        pyenvs = TypeMoq.Mock.ofType<IComponentAdapter>();
         serviceContainer.setup((c) => c.get(TypeMoq.It.isValue(IDisposableRegistry))).returns(() => []);
         serviceContainer.setup((c) => c.get(TypeMoq.It.isValue(IPlatformService))).returns(() => platformSvc.object);
-        serviceContainer.setup((c) => c.get(TypeMoq.It.isValue(IComponentAdapter))).returns(() => pyenvs.object);
         serviceContainer
             .setup((c) => c.get(TypeMoq.It.isValue(IInterpreterLocatorHelper)))
             .returns(() => helper.object);
 
-        locator = new PythonInterpreterLocatorService(serviceContainer.object, pyenvs.object);
+        locator = new PythonInterpreterLocatorService(serviceContainer.object);
     });
     [undefined, Uri.file('Something')].forEach((resource) => {
         getNamesAndValues<OSType>(OSType).forEach((osType) => {
@@ -968,8 +679,8 @@ suite('Interpreters - Locators Index', () => {
                         .verifiable(TypeMoq.Times.once());
 
                     serviceContainer
-                        .setup(
-                            (c) => c.get(TypeMoq.It.isValue(IInterpreterLocatorService), TypeMoq.It.isValue(typeName)),
+                        .setup((c) =>
+                            c.get(TypeMoq.It.isValue(IInterpreterLocatorService), TypeMoq.It.isValue(typeName)),
                         )
                         .returns(() => typeLocator.object);
 
@@ -1031,8 +742,8 @@ suite('Interpreters - Locators Index', () => {
                         .verifiable(TypeMoq.Times.once());
 
                     serviceContainer
-                        .setup(
-                            (c) => c.get(TypeMoq.It.isValue(IInterpreterLocatorService), TypeMoq.It.isValue(typeName)),
+                        .setup((c) =>
+                            c.get(TypeMoq.It.isValue(IInterpreterLocatorService), TypeMoq.It.isValue(typeName)),
                         )
                         .returns(() => typeLocator.object);
 
@@ -1097,8 +808,8 @@ suite('Interpreters - Locators Index', () => {
                         .verifiable(TypeMoq.Times.once());
 
                     serviceContainer
-                        .setup(
-                            (c) => c.get(TypeMoq.It.isValue(IInterpreterLocatorService), TypeMoq.It.isValue(typeName)),
+                        .setup((c) =>
+                            c.get(TypeMoq.It.isValue(IInterpreterLocatorService), TypeMoq.It.isValue(typeName)),
                         )
                         .returns(() => typeLocator.object);
 
@@ -1115,9 +826,11 @@ suite('Interpreters - Locators Index', () => {
 
                 await locator.getInterpreters(resource, { onSuggestion: true });
 
-                locatorsWithInterpreters.forEach((item) => item.locator.verify(
-                    (l) => { l.didTriggerInterpreterSuggestions = true; }, TypeMoq.Times.once(),
-                ));
+                locatorsWithInterpreters.forEach((item) =>
+                    item.locator.verify((l) => {
+                        l.didTriggerInterpreterSuggestions = true;
+                    }, TypeMoq.Times.once()),
+                );
                 expect(locator.didTriggerInterpreterSuggestions).to.equal(
                     true,
                     'didTriggerInterpreterSuggestions should be set to true.',

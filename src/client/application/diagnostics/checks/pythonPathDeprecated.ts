@@ -1,14 +1,12 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-'use strict';
-
+// eslint-disable-next-line max-classes-per-file
 import { inject, named } from 'inversify';
-import { ConfigurationTarget, DiagnosticSeverity } from 'vscode';
+import { DiagnosticSeverity } from 'vscode';
 import { IWorkspaceService } from '../../../common/application/types';
-import { STANDARD_OUTPUT_CHANNEL } from '../../../common/constants';
 import { DeprecatePythonPath } from '../../../common/experiments/groups';
-import { IDisposableRegistry, IExperimentsManager, IOutputChannel, Resource } from '../../../common/types';
+import { IDisposableRegistry, IExperimentService, Resource } from '../../../common/types';
 import { Common, Diagnostics } from '../../../common/utils/localize';
 import { IServiceContainer } from '../../../ioc/types';
 import { BaseDiagnostic, BaseDiagnosticsService } from '../base';
@@ -24,7 +22,7 @@ export class PythonPathDeprecatedDiagnostic extends BaseDiagnostic {
             message,
             DiagnosticSeverity.Information,
             DiagnosticScope.WorkspaceFolder,
-            resource
+            resource,
         );
     }
 }
@@ -33,22 +31,21 @@ export const PythonPathDeprecatedDiagnosticServiceId = 'PythonPathDeprecatedDiag
 
 export class PythonPathDeprecatedDiagnosticService extends BaseDiagnosticsService {
     private workspaceService: IWorkspaceService;
-    private output: IOutputChannel;
+
     constructor(
         @inject(IServiceContainer) serviceContainer: IServiceContainer,
         @inject(IDiagnosticHandlerService)
         @named(DiagnosticCommandPromptHandlerServiceId)
         protected readonly messageService: IDiagnosticHandlerService<MessageCommandPrompt>,
-        @inject(IDisposableRegistry) disposableRegistry: IDisposableRegistry
+        @inject(IDisposableRegistry) disposableRegistry: IDisposableRegistry,
     ) {
         super([DiagnosticCodes.PythonPathDeprecatedDiagnostic], serviceContainer, disposableRegistry, true);
         this.workspaceService = this.serviceContainer.get<IWorkspaceService>(IWorkspaceService);
-        this.output = this.serviceContainer.get<IOutputChannel>(IOutputChannel, STANDARD_OUTPUT_CHANNEL);
     }
+
     public async diagnose(resource: Resource): Promise<IDiagnostic[]> {
-        const experiments = this.serviceContainer.get<IExperimentsManager>(IExperimentsManager);
-        experiments.sendTelemetryIfInExperiment(DeprecatePythonPath.control);
-        if (!experiments.inExperiment(DeprecatePythonPath.experiment)) {
+        const experiments = this.serviceContainer.get<IExperimentService>(IExperimentService);
+        if (!experiments.inExperimentSync(DeprecatePythonPath.experiment)) {
             return [];
         }
         const setting = this.workspaceService.getConfiguration('python', resource).inspect<string>('pythonPath');
@@ -63,14 +60,6 @@ export class PythonPathDeprecatedDiagnosticService extends BaseDiagnosticsServic
         return [];
     }
 
-    public async _removePythonPathFromWorkspaceSettings(resource: Resource) {
-        const workspaceConfig = this.workspaceService.getConfiguration('python', resource);
-        await Promise.all([
-            workspaceConfig.update('pythonPath', undefined, ConfigurationTarget.Workspace),
-            workspaceConfig.update('pythonPath', undefined, ConfigurationTarget.WorkspaceFolder)
-        ]);
-    }
-
     protected async onHandle(diagnostics: IDiagnostic[]): Promise<void> {
         if (diagnostics.length === 0 || !(await this.canHandle(diagnostics[0]))) {
             return;
@@ -79,22 +68,14 @@ export class PythonPathDeprecatedDiagnosticService extends BaseDiagnosticsServic
         if (await this.filterService.shouldIgnoreDiagnostic(diagnostic.code)) {
             return;
         }
-        await this._removePythonPathFromWorkspaceSettings(diagnostic.resource);
         const commandFactory = this.serviceContainer.get<IDiagnosticsCommandFactory>(IDiagnosticsCommandFactory);
         const options = [
             {
-                prompt: Common.openOutputPanel(),
-                command: {
-                    diagnostic,
-                    invoke: async (): Promise<void> => this.output.show(true)
-                }
+                prompt: Common.ok(),
             },
-            {
-                prompt: Common.doNotShowAgain(),
-                command: commandFactory.createCommand(diagnostic, { type: 'ignore', options: DiagnosticScope.Global })
-            }
         ];
-
+        const command = commandFactory.createCommand(diagnostic, { type: 'ignore', options: DiagnosticScope.Global });
+        await command.invoke();
         await this.messageService.handle(diagnostic, { commandPrompts: options });
     }
 }

@@ -1,4 +1,5 @@
-// tslint:disable:no-require-imports no-var-requires underscore-consistent-invocation no-unnecessary-callback-wrapper
+/* eslint-disable max-classes-per-file */
+
 import { inject, injectable } from 'inversify';
 import { Uri } from 'vscode';
 import { traceError, traceInfo } from '../../../../common/logger';
@@ -38,8 +39,10 @@ export class CurrentPathService extends CacheableLocatorService {
      *
      * Called by VS Code to indicate it is done with the resource.
      */
-    // tslint:disable-next-line:no-empty
-    public dispose() {}
+
+    public dispose(): void {
+        // No body
+    }
 
     /**
      * Return the located interpreters.
@@ -60,15 +63,13 @@ export class CurrentPathService extends CacheableLocatorService {
         const pathsToCheck = [...this.pythonCommandProvider.getCommands(), { command: configSettings.pythonPath }];
 
         const pythonPaths = Promise.all(pathsToCheck.map((item) => this.getInterpreter(item)));
-        return (
-            pythonPaths
-                .then((interpreters) => interpreters.filter((item) => item.length > 0))
-                // tslint:disable-next-line:promise-function-async
-                .then((interpreters) => Promise.all(
-                    interpreters.map((interpreter) => this.getInterpreterDetails(interpreter)),
-                ))
-                .then((interpreters) => interpreters.filter((item) => !!item).map((item) => item!))
-        );
+        return pythonPaths
+            .then((interpreters) => interpreters.filter((item) => item.length > 0))
+
+            .then((interpreters) =>
+                Promise.all(interpreters.map((interpreter) => this.getInterpreterDetails(interpreter))),
+            )
+            .then((interpreters) => interpreters.filter((item) => !!item).map((item) => item!));
     }
 
     /**
@@ -77,7 +78,7 @@ export class CurrentPathService extends CacheableLocatorService {
     private async getInterpreterDetails(pythonPath: string): Promise<PythonEnvironment | undefined> {
         return this.helper.getInterpreterInformation(pythonPath).then((details) => {
             if (!details) {
-                return;
+                return undefined;
             }
             this._hasInterpreters.resolve(true);
             return {
@@ -110,7 +111,7 @@ export class CurrentPathService extends CacheableLocatorService {
                     );
                     return '';
                 })
-                .catch((_ex) => {
+                .catch(() => {
                     traceInfo(
                         `Detection of Python Interpreter for Command ${options.command} and args ${pyArgs.join(
                             ' ',
@@ -136,8 +137,6 @@ export class PythonInPathCommandProvider implements IPythonInPathCommandProvider
         }
 
         const versions = ['3.7', '3.6', '3', '2'];
-        return paths.concat(
-            versions.map((version) => ({ command: 'py', args: [`-${version}`] })),
-        );
+        return paths.concat(versions.map((version) => ({ command: 'py', args: [`-${version}`] })));
     }
 }

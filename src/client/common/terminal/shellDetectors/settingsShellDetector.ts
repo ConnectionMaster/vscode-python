@@ -23,7 +23,7 @@ import { BaseShellDetector } from './baseShellDetector';
 export class SettingsShellDetector extends BaseShellDetector {
     constructor(
         @inject(IWorkspaceService) private readonly workspace: IWorkspaceService,
-        @inject(IPlatformService) private readonly platform: IPlatformService
+        @inject(IPlatformService) private readonly platform: IPlatformService,
     ) {
         super(2);
     }
@@ -51,7 +51,7 @@ export class SettingsShellDetector extends BaseShellDetector {
     }
     public identify(
         telemetryProperties: ShellIdentificationTelemetry,
-        _terminal?: Terminal
+        _terminal?: Terminal,
     ): TerminalShellType | undefined {
         const shellPath = this.getTerminalShellPath();
         telemetryProperties.hasCustomShell = !!shellPath;
@@ -59,8 +59,9 @@ export class SettingsShellDetector extends BaseShellDetector {
 
         if (shell !== TerminalShellType.other) {
             telemetryProperties.shellIdentificationSource = 'environment';
+        } else {
+            telemetryProperties.shellIdentificationSource = 'settings';
         }
-        telemetryProperties.shellIdentificationSource = 'settings';
         traceVerbose(`Shell path from user settings '${shellPath}'`);
         return shell;
     }

@@ -3,6 +3,7 @@ import * as chaiAsPromised from 'chai-as-promised';
 import * as path from 'path';
 import { instance, mock } from 'ts-mockito';
 import { ConfigurationTarget } from 'vscode';
+import { CommandSource } from '../../client/common/constants';
 import { createDeferred } from '../../client/common/utils/async';
 import { ICondaService, IInterpreterService } from '../../client/interpreter/contracts';
 import { InterpreterService } from '../../client/interpreter/interpreterService';
@@ -13,25 +14,27 @@ import { TestManagerRunner as UnitTestTestManagerRunner } from '../../client/tes
 import { ArgumentsHelper } from '../../client/testing/common/argumentsHelper';
 import {
     CANCELLATION_REASON,
-    CommandSource,
     NOSETEST_PROVIDER,
     PYTEST_PROVIDER,
-    UNITTEST_PROVIDER
+    UNITTEST_PROVIDER,
 } from '../../client/testing/common/constants';
 import { TestRunner } from '../../client/testing/common/runner';
 import {
+    IArgumentsHelper,
+    IArgumentsService,
     ITestDebugLauncher,
     ITestManagerFactory,
+    ITestManagerRunner,
     ITestMessageService,
     ITestRunner,
+    IUnitTestHelper,
     IXUnitParser,
-    TestProvider
 } from '../../client/testing/common/types';
 import { XUnitParser } from '../../client/testing/common/xUnitParser';
 import { ArgumentsService as NoseTestArgumentsService } from '../../client/testing/nosetest/services/argsService';
 import { ArgumentsService as PyTestArgumentsService } from '../../client/testing/pytest/services/argsService';
 import { TestMessageService } from '../../client/testing/pytest/services/testMessageService';
-import { IArgumentsHelper, IArgumentsService, ITestManagerRunner, IUnitTestHelper } from '../../client/testing/types';
+import { TestProvider } from '../../client/testing/types';
 import { UnitTestHelper } from '../../client/testing/unittest/helper';
 import { ArgumentsService as UnitTestArgumentsService } from '../../client/testing/unittest/services/argsService';
 import { deleteDirectory, rootWorkspaceUri, updateSetting } from '../common';
@@ -44,41 +47,38 @@ use(chaiAsPromised);
 const testFilesPath = path.join(__dirname, '..', '..', '..', 'src', 'test', 'pythonFiles', 'testFiles', 'debuggerTest');
 const defaultUnitTestArgs = ['-v', '-s', '.', '-p', '*test*.py'];
 
-// tslint:disable-next-line:max-func-body-length
 suite('Unit Tests - debugging', () => {
     let ioc: UnitTestIocContainer;
     const configTarget = IS_MULTI_ROOT_TEST ? ConfigurationTarget.WorkspaceFolder : ConfigurationTarget.Workspace;
     suiteSetup(async function () {
-        // tslint:disable-next-line:no-invalid-this
         this.timeout(TEST_TIMEOUT * 2);
         // Test discovery is where the delay is, hence give 10 seconds (as we discover tests at least twice in each test).
         await initialize();
         await Promise.all([
             updateSetting('testing.unittestArgs', defaultUnitTestArgs, rootWorkspaceUri, configTarget),
             updateSetting('testing.nosetestArgs', [], rootWorkspaceUri, configTarget),
-            updateSetting('testing.pytestArgs', [], rootWorkspaceUri, configTarget)
+            updateSetting('testing.pytestArgs', [], rootWorkspaceUri, configTarget),
         ]);
     });
     setup(async function () {
-        // tslint:disable-next-line:no-invalid-this
         this.timeout(TEST_TIMEOUT * 2); // This hook requires more timeout as we're deleting files as well
         await deleteDirectory(path.join(testFilesPath, '.cache'));
         await initializeTest();
-        initializeDI();
+        await initializeDI();
     });
     teardown(async function () {
         // It's been observed that each call to `updateSetting` can take upto 20 seconds on Windows, hence increasing timeout.
-        // tslint:disable-next-line:no-invalid-this
+
         this.timeout(TEST_TIMEOUT * 3);
         await ioc.dispose();
         await Promise.all([
             updateSetting('testing.unittestArgs', defaultUnitTestArgs, rootWorkspaceUri, configTarget),
             updateSetting('testing.nosetestArgs', [], rootWorkspaceUri, configTarget),
-            updateSetting('testing.pytestArgs', [], rootWorkspaceUri, configTarget)
+            updateSetting('testing.pytestArgs', [], rootWorkspaceUri, configTarget),
         ]);
     });
 
-    function initializeDI() {
+    async function initializeDI() {
         ioc = new UnitTestIocContainer();
         ioc.registerCommonTypes();
         ioc.registerProcessTypes();
@@ -94,7 +94,7 @@ suite('Unit Tests - debugging', () => {
         ioc.registerTestManagers();
         ioc.registerMockUnitTestSocketServer();
         ioc.registerInterpreterStorageTypes();
-        ioc.registerMockInterpreterTypes();
+        await ioc.registerMockInterpreterTypes();
         ioc.serviceManager.add<IArgumentsHelper>(IArgumentsHelper, ArgumentsHelper);
         ioc.serviceManager.add<ITestRunner>(ITestRunner, TestRunner);
         ioc.serviceManager.add<IXUnitParser>(IXUnitParser, XUnitParser);
@@ -115,7 +115,7 @@ suite('Unit Tests - debugging', () => {
         const testManager = ioc.serviceContainer.get<ITestManagerFactory>(ITestManagerFactory)(
             testProvider,
             rootWorkspaceUri!,
-            testFilesPath
+            testFilesPath,
         );
         const mockDebugLauncher = ioc.serviceContainer.get<MockDebugLauncher>(ITestDebugLauncher);
         const tests = await testManager.discoverTests(CommandSource.commandPalette, true, true);
@@ -164,7 +164,7 @@ suite('Unit Tests - debugging', () => {
         const testManager = ioc.serviceContainer.get<ITestManagerFactory>(ITestManagerFactory)(
             testProvider,
             rootWorkspaceUri!,
-            testFilesPath
+            testFilesPath,
         );
         const mockDebugLauncher = ioc.serviceContainer.get<MockDebugLauncher>(ITestDebugLauncher);
         const tests = await testManager.discoverTests(CommandSource.commandPalette, true, true);
@@ -180,12 +180,12 @@ suite('Unit Tests - debugging', () => {
         const discoveryPromise = testManager.discoverTests(CommandSource.commandPalette, true, true, true);
         await expect(runningPromise).to.be.rejectedWith(
             CANCELLATION_REASON,
-            'Incorrect reason for ending the debugger'
+            'Incorrect reason for ending the debugger',
         );
         await ioc.dispose(); // will cancel test discovery
         await expect(discoveryPromise).to.be.rejectedWith(
             CANCELLATION_REASON,
-            'Incorrect reason for ending the debugger'
+            'Incorrect reason for ending the debugger',
         );
     }
 
@@ -208,7 +208,7 @@ suite('Unit Tests - debugging', () => {
         const testManager = ioc.serviceContainer.get<ITestManagerFactory>(ITestManagerFactory)(
             testProvider,
             rootWorkspaceUri!,
-            testFilesPath
+            testFilesPath,
         );
         const mockDebugLauncher = ioc.serviceContainer.get<MockDebugLauncher>(ITestDebugLauncher);
         const tests = await testManager.discoverTests(CommandSource.commandPalette, true, true);
@@ -225,16 +225,16 @@ suite('Unit Tests - debugging', () => {
         const deferred = createDeferred<string>();
 
         discoveryPromise
-            // tslint:disable-next-line:no-unsafe-any
+
             .then(() => deferred.resolve(''))
-            // tslint:disable-next-line:no-unsafe-any
+
             .catch((ex) => deferred.reject(ex));
 
         // This promise should never resolve nor reject.
         runningPromise
             .then(() => "Debugger stopped when it shouldn't have")
             .catch(() => "Debugger crashed when it shouldn't have")
-            // tslint:disable-next-line: no-floating-promises
+
             .then((error) => {
                 deferred.reject(error);
             });

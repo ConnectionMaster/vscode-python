@@ -6,7 +6,7 @@ import * as path from 'path';
 import { CancellationToken, OutputChannel, ProgressLocation, ProgressOptions } from 'vscode';
 import { IInterpreterService } from '../../interpreter/contracts';
 import { IServiceContainer } from '../../ioc/types';
-import { EnvironmentType } from '../../pythonEnvironments/info';
+import { EnvironmentType, ModuleInstallerType } from '../../pythonEnvironments/info';
 import { sendTelemetryEvent } from '../../telemetry';
 import { EventName } from '../../telemetry/constants';
 import { IApplicationShell } from '../application/types';
@@ -14,27 +14,45 @@ import { wrapCancellationTokens } from '../cancellation';
 import { STANDARD_OUTPUT_CHANNEL } from '../constants';
 import { IFileSystem } from '../platform/types';
 import * as internalPython from '../process/internal/python';
-import { ITerminalServiceFactory } from '../terminal/types';
-import { ExecutionInfo, IConfigurationService, IOutputChannel } from '../types';
+import { ITerminalServiceFactory, TerminalCreationOptions } from '../terminal/types';
+import { ExecutionInfo, IConfigurationService, IOutputChannel, ModuleNamePurpose, Product } from '../types';
 import { Products } from '../utils/localize';
 import { isResource } from '../utils/misc';
-import { IModuleInstaller, InterpreterUri } from './types';
+import { ProductNames } from './productNames';
+import { IModuleInstaller, InterpreterUri, ModuleInstallFlags } from './types';
 
 @injectable()
 export abstract class ModuleInstaller implements IModuleInstaller {
     public abstract get priority(): number;
     public abstract get name(): string;
     public abstract get displayName(): string;
+    public abstract get type(): ModuleInstallerType;
 
     constructor(protected serviceContainer: IServiceContainer) {}
 
-    public async installModule(name: string, resource?: InterpreterUri, cancel?: CancellationToken): Promise<void> {
-        sendTelemetryEvent(EventName.PYTHON_INSTALL_PACKAGE, undefined, { installer: this.displayName });
+    public async installModule(
+        productOrModuleName: Product | string,
+        resource?: InterpreterUri,
+        cancel?: CancellationToken,
+        flags?: ModuleInstallFlags,
+    ): Promise<void> {
+        const name =
+            typeof productOrModuleName == 'string'
+                ? productOrModuleName
+                : translateProductToModule(productOrModuleName, ModuleNamePurpose.install);
+        const productName = typeof productOrModuleName === 'string' ? name : ProductNames.get(productOrModuleName);
+        sendTelemetryEvent(EventName.PYTHON_INSTALL_PACKAGE, undefined, { installer: this.displayName, productName });
         const uri = isResource(resource) ? resource : undefined;
-        const executionInfo = await this.getExecutionInfo(name, resource);
+        const options: TerminalCreationOptions = {};
+        if (isResource(resource)) {
+            options.resource = uri;
+        } else {
+            options.interpreter = resource;
+        }
+        const executionInfo = await this.getExecutionInfo(name, resource, flags);
         const terminalService = this.serviceContainer
             .get<ITerminalServiceFactory>(ITerminalServiceFactory)
-            .getTerminalService(uri);
+            .getTerminalService(options);
         const install = async (token?: CancellationToken) => {
             const executionInfoArgs = await this.processInstallArgs(executionInfo.args, resource);
             if (executionInfo.moduleName) {
@@ -72,10 +90,10 @@ export abstract class ModuleInstaller implements IModuleInstaller {
             const options: ProgressOptions = {
                 location: ProgressLocation.Notification,
                 cancellable: true,
-                title: Products.installingModule().format(name)
+                title: Products.installingModule().format(name),
             };
             await shell.withProgress(options, async (_, token: CancellationToken) =>
-                install(wrapCancellationTokens(token, cancel))
+                install(wrapCancellationTokens(token, cancel)),
             );
         } else {
             await install(cancel);
@@ -85,14 +103,14 @@ export abstract class ModuleInstaller implements IModuleInstaller {
 
     protected elevatedInstall(execPath: string, args: string[]) {
         const options = {
-            name: 'VS Code Python'
+            name: 'VS Code Python',
         };
         const outputChannel = this.serviceContainer.get<OutputChannel>(IOutputChannel, STANDARD_OUTPUT_CHANNEL);
         const command = `"${execPath.replace(/\\/g, '/')}" ${args.join(' ')}`;
 
         outputChannel.appendLine('');
         outputChannel.appendLine(`[Elevated] ${command}`);
-        // tslint:disable-next-line:no-require-imports no-var-requires
+
         const sudo = require('sudo-prompt');
 
         sudo.exec(command, options, async (error: string, stdout: string, stderr: string) => {
@@ -112,7 +130,11 @@ export abstract class ModuleInstaller implements IModuleInstaller {
             }
         });
     }
-    protected abstract getExecutionInfo(moduleName: string, resource?: InterpreterUri): Promise<ExecutionInfo>;
+    protected abstract getExecutionInfo(
+        moduleName: string,
+        resource?: InterpreterUri,
+        flags?: ModuleInstallFlags,
+    ): Promise<ExecutionInfo>;
     private async processInstallArgs(args: string[], resource?: InterpreterUri): Promise<string[]> {
         const indexOfPylint = args.findIndex((arg) => arg.toUpperCase() === 'PYLINT');
         if (indexOfPylint === -1) {
@@ -128,5 +150,62 @@ export abstract class ModuleInstaller implements IModuleInstaller {
             return newArgs;
         }
         return args;
+    }
+}
+
+export function translateProductToModule(product: Product, purpose: ModuleNamePurpose): string {
+    switch (product) {
+        case Product.mypy:
+            return 'mypy';
+        case Product.nosetest: {
+            return purpose === ModuleNamePurpose.install ? 'nose' : 'nosetests';
+        }
+        case Product.pylama:
+            return 'pylama';
+        case Product.prospector:
+            return 'prospector';
+        case Product.pylint:
+            return 'pylint';
+        case Product.pytest:
+            return 'pytest';
+        case Product.autopep8:
+            return 'autopep8';
+        case Product.black:
+            return 'black';
+        case Product.pycodestyle:
+            return 'pycodestyle';
+        case Product.pydocstyle:
+            return 'pydocstyle';
+        case Product.yapf:
+            return 'yapf';
+        case Product.flake8:
+            return 'flake8';
+        case Product.unittest:
+            return 'unittest';
+        case Product.rope:
+            return 'rope';
+        case Product.bandit:
+            return 'bandit';
+        case Product.jupyter:
+            return 'jupyter';
+        case Product.notebook:
+            return 'notebook';
+        case Product.pandas:
+            return 'pandas';
+        case Product.ipykernel:
+            return 'ipykernel';
+        case Product.nbconvert:
+            return 'nbconvert';
+        case Product.kernelspec:
+            return 'kernelspec';
+        case Product.tensorboard:
+            return 'tensorboard';
+        case Product.torchProfilerInstallName:
+            return 'torch-tb-profiler';
+        case Product.torchProfilerImportName:
+            return 'torch_tb_profiler';
+        default: {
+            throw new Error(`Product ${product} cannot be installed as a Python Module.`);
+        }
     }
 }

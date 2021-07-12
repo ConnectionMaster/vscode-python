@@ -8,8 +8,13 @@ import { ICommandManager } from '../../../common/application/types';
 import { ContextKey } from '../../../common/contextKey';
 import { IDisposable } from '../../../common/types';
 import { swallowExceptions } from '../../../common/utils/decorators';
-import { ITestManagementService, WorkspaceTestStatus } from '../../types';
-import { ITestCollectionStorageService, ITestContextService, TestStatus } from '../types';
+import {
+    ITestCollectionStorageService,
+    ITestContextService,
+    ITestManagementService,
+    TestStatus,
+    WorkspaceTestStatus,
+} from '../types';
 
 @injectable()
 export class TestContextService implements ITestContextService {
@@ -21,7 +26,7 @@ export class TestContextService implements ITestContextService {
     constructor(
         @inject(ITestCollectionStorageService) private readonly storage: ITestCollectionStorageService,
         @inject(ITestManagementService) private readonly testManager: ITestManagementService,
-        @inject(ICommandManager) cmdManager: ICommandManager
+        @inject(ICommandManager) cmdManager: ICommandManager,
     ) {
         this.hasFailedTests = new ContextKey('hasFailedTests', cmdManager);
         this.runningTests = new ContextKey('runningTests', cmdManager);
@@ -45,8 +50,8 @@ export class TestContextService implements ITestContextService {
             ...[
                 this.runningTests.set(status.status === TestStatus.Running),
                 this.discoveringTests.set(status.status === TestStatus.Discovering),
-                this.busyTests.set(status.status === TestStatus.Running || status.status === TestStatus.Discovering)
-            ]
+                this.busyTests.set(status.status === TestStatus.Running || status.status === TestStatus.Discovering),
+            ],
         );
 
         await Promise.all(promises);

@@ -11,7 +11,7 @@ import { ShowExtensionSurveyPrompt } from '../common/experiments/groups';
 import '../common/extensions';
 import { traceDecorators } from '../common/logger';
 import { IPlatformService } from '../common/platform/types';
-import { IBrowserService, IExperimentsManager, IPersistentStateFactory, IRandom } from '../common/types';
+import { IBrowserService, IExperimentService, IPersistentStateFactory, IRandom } from '../common/types';
 import { Common, ExtensionSurveyBanner } from '../common/utils/localize';
 import { sendTelemetryEvent } from '../telemetry';
 import { EventName } from '../telemetry/constants';
@@ -20,7 +20,7 @@ import { IExtensionSingleActivationService } from './types';
 // persistent state names, exported to make use of in testing
 export enum extensionSurveyStateKeys {
     doNotShowAgain = 'doNotShowExtensionSurveyAgain',
-    disableSurveyForTime = 'doNotShowExtensionSurveyUntilTime'
+    disableSurveyForTime = 'doNotShowExtensionSurveyUntilTime',
 }
 
 const timeToDisableSurveyFor = 1000 * 60 * 60 * 24 * 7 * 12; // 12 weeks
@@ -33,16 +33,15 @@ export class ExtensionSurveyPrompt implements IExtensionSingleActivationService 
         @inject(IBrowserService) private browserService: IBrowserService,
         @inject(IPersistentStateFactory) private persistentState: IPersistentStateFactory,
         @inject(IRandom) private random: IRandom,
-        @inject(IExperimentsManager) private experiments: IExperimentsManager,
+        @inject(IExperimentService) private experiments: IExperimentService,
         @inject(IApplicationEnvironment) private appEnvironment: IApplicationEnvironment,
         @inject(IPlatformService) private platformService: IPlatformService,
         @optional() private sampleSizePerOneHundredUsers: number = 10,
-        @optional() private waitTimeToShowSurvey: number = WAIT_TIME_TO_SHOW_SURVEY
+        @optional() private waitTimeToShowSurvey: number = WAIT_TIME_TO_SHOW_SURVEY,
     ) {}
 
     public async activate(): Promise<void> {
-        if (!this.experiments.inExperiment(ShowExtensionSurveyPrompt.enabled)) {
-            this.experiments.sendTelemetryIfInExperiment(ShowExtensionSurveyPrompt.control);
+        if (!(await this.experiments.inExperiment(ShowExtensionSurveyPrompt.experiment))) {
             return;
         }
         const show = this.shouldShowBanner();
@@ -59,7 +58,7 @@ export class ExtensionSurveyPrompt implements IExtensionSingleActivationService 
         }
         const doNotShowSurveyAgain = this.persistentState.createGlobalPersistentState(
             extensionSurveyStateKeys.doNotShowAgain,
-            false
+            false,
         );
         if (doNotShowSurveyAgain.value) {
             return false;
@@ -67,7 +66,7 @@ export class ExtensionSurveyPrompt implements IExtensionSingleActivationService 
         const isSurveyDisabledForTimeState = this.persistentState.createGlobalPersistentState(
             extensionSurveyStateKeys.disableSurveyForTime,
             false,
-            timeToDisableSurveyFor
+            timeToDisableSurveyFor,
         );
         if (isSurveyDisabledForTimeState.value) {
             return false;
@@ -85,16 +84,16 @@ export class ExtensionSurveyPrompt implements IExtensionSingleActivationService 
         const prompts = [
             ExtensionSurveyBanner.bannerLabelYes(),
             ExtensionSurveyBanner.maybeLater(),
-            Common.doNotShowAgain()
+            Common.doNotShowAgain(),
         ];
         const telemetrySelections: ['Yes', 'Maybe later', 'Do not show again'] = [
             'Yes',
             'Maybe later',
-            'Do not show again'
+            'Do not show again',
         ];
         const selection = await this.appShell.showInformationMessage(ExtensionSurveyBanner.bannerMessage(), ...prompts);
         sendTelemetryEvent(EventName.EXTENSION_SURVEY_PROMPT, undefined, {
-            selection: selection ? telemetrySelections[prompts.indexOf(selection)] : undefined
+            selection: selection ? telemetrySelections[prompts.indexOf(selection)] : undefined,
         });
         if (!selection) {
             return;
@@ -106,7 +105,7 @@ export class ExtensionSurveyPrompt implements IExtensionSingleActivationService 
                 .createGlobalPersistentState(
                     extensionSurveyStateKeys.disableSurveyForTime,
                     false,
-                    timeToDisableSurveyFor
+                    timeToDisableSurveyFor,
                 )
                 .updateValue(true);
         } else if (selection === Common.doNotShowAgain()) {
@@ -122,7 +121,7 @@ export class ExtensionSurveyPrompt implements IExtensionSingleActivationService 
             o: encodeURIComponent(this.platformService.osType), // platform
             v: encodeURIComponent(this.appEnvironment.vscodeVersion),
             e: encodeURIComponent(this.appEnvironment.packageJson.version), // extension version
-            m: encodeURIComponent(this.appEnvironment.sessionId)
+            m: encodeURIComponent(this.appEnvironment.sessionId),
         });
         const url = `https://aka.ms/AA5rjx5?${query}`;
         this.browserService.launch(url);

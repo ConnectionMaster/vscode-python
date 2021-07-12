@@ -1,7 +1,5 @@
 'use strict';
 
-// tslint:disable:no-duplicate-imports no-unnecessary-callback-wrapper
-
 import { inject, injectable } from 'inversify';
 import {
     ConfigurationChangeEvent,
@@ -11,47 +9,61 @@ import {
     EventEmitter,
     OutputChannel,
     TextDocument,
-    Uri
+    Uri,
 } from 'vscode';
 import { IApplicationShell, ICommandManager, IDocumentManager, IWorkspaceService } from '../common/application/types';
 import * as constants from '../common/constants';
-import { AlwaysDisplayTestExplorerGroups } from '../common/experiments/groups';
 import '../common/extensions';
 import { traceError } from '../common/logger';
-import {
-    IConfigurationService,
-    IDisposableRegistry,
-    IExperimentsManager,
-    IOutputChannel,
-    Resource
-} from '../common/types';
+import { IConfigurationService, IDisposableRegistry, IOutputChannel, Product, Resource } from '../common/types';
 import { noop } from '../common/utils/misc';
 import { IInterpreterService } from '../interpreter/contracts';
 import { IServiceContainer } from '../ioc/types';
 import { EventName } from '../telemetry/constants';
 import { captureTelemetry, sendTelemetryEvent } from '../telemetry/index';
 import { activateCodeLenses } from './codeLenses/main';
-import { CANCELLATION_REASON, CommandSource, TEST_OUTPUT_CHANNEL } from './common/constants';
+import { CANCELLATION_REASON } from './common/constants';
 import { selectTestWorkspace } from './common/testUtils';
+import { TestSettingsPropertyNames } from './configuration/types';
 import {
     ITestCollectionStorageService,
+    ITestConfigurationService,
+    ITestManagementService,
     ITestManager,
     IWorkspaceTestManagerService,
+    ITestDisplay,
     TestFile,
     TestFunction,
-    TestStatus,
-    TestsToRun
-} from './common/types';
-import {
-    ITestConfigurationService,
-    ITestDisplay,
-    ITestManagementService,
+    ITestContextService,
     ITestResultDisplay,
+    ITestsHelper,
+    TestStatus,
+    TestsToRun,
     TestWorkspaceFolder,
-    WorkspaceTestStatus
-} from './types';
+    WorkspaceTestStatus,
+} from './common/types';
+import { TEST_OUTPUT_CHANNEL } from './constants';
+import { ITestingService } from './types';
 
-// tslint:disable:no-any
+@injectable()
+export class TestingService implements ITestingService {
+    constructor(@inject(IServiceContainer) private serviceContainer: IServiceContainer) {}
+
+    public async activate(symbolProvider: DocumentSymbolProvider): Promise<void> {
+        const mgmt = this.serviceContainer.get<ITestManagementService>(ITestManagementService);
+        return ((mgmt as unknown) as ITestingService).activate(symbolProvider);
+    }
+
+    public register(): void {
+        const context = this.serviceContainer.get<ITestContextService>(ITestContextService);
+        context.register();
+    }
+
+    public getSettingsPropertyNames(product: Product): TestSettingsPropertyNames {
+        const helper = this.serviceContainer.get<ITestsHelper>(ITestsHelper);
+        return helper.getSettingsPropertyNames(product);
+    }
+}
 
 @injectable()
 export class UnitTestManagementService implements ITestManagementService, Disposable {
@@ -97,29 +109,19 @@ export class UnitTestManagementService implements ITestManagementService, Dispos
         }
         this.activatedOnce = true;
         this.workspaceTestManagerService = this.serviceContainer.get<IWorkspaceTestManagerService>(
-            IWorkspaceTestManagerService
+            IWorkspaceTestManagerService,
         );
 
         this.registerHandlers();
         this.registerCommands();
-        this.checkExperiments();
         this.autoDiscoverTests(undefined).catch((ex) =>
-            traceError('Failed to auto discover tests upon activation', ex)
+            traceError('Failed to auto discover tests upon activation', ex),
         );
         await this.registerSymbolProvider(symbolProvider);
     }
-    public checkExperiments() {
-        const experiments = this.serviceContainer.get<IExperimentsManager>(IExperimentsManager);
-        if (experiments.inExperiment(AlwaysDisplayTestExplorerGroups.experiment)) {
-            const commandManager = this.serviceContainer.get<ICommandManager>(ICommandManager);
-            commandManager.executeCommand('setContext', 'testsDiscovered', true).then(noop, noop);
-        } else {
-            experiments.sendTelemetryIfInExperiment(AlwaysDisplayTestExplorerGroups.control);
-        }
-    }
     public async getTestManager(
         displayTestNotConfiguredMessage: boolean,
-        resource?: Uri
+        resource?: Uri,
     ): Promise<ITestManager | undefined | void> {
         let wkspace: Uri | undefined;
         if (resource) {
@@ -143,7 +145,7 @@ export class UnitTestManagementService implements ITestManagementService, Dispos
         }
         if (displayTestNotConfiguredMessage) {
             const configurationService = this.serviceContainer.get<ITestConfigurationService>(
-                ITestConfigurationService
+                ITestConfigurationService,
             );
             await configurationService.displayTestFrameworkError(wkspace);
         }
@@ -158,7 +160,7 @@ export class UnitTestManagementService implements ITestManagementService, Dispos
             return;
         }
         const workspaceFolderUri = this.workspaceService.workspaceFolders.find((w) =>
-            eventArgs.affectsConfiguration('python.testing', w.uri)
+            eventArgs.affectsConfiguration('python.testing', w.uri),
         );
         if (!workspaceFolderUri) {
             return;
@@ -175,7 +177,7 @@ export class UnitTestManagementService implements ITestManagementService, Dispos
             if (this.testResultDisplay) {
                 this.testResultDisplay.enabled = false;
             }
-            // tslint:disable-next-line:no-suspicious-comment
+
             // TODO: Why are we disposing, what happens when tests are enabled.
             if (this.workspaceTestManagerService) {
                 this.workspaceTestManagerService.dispose();
@@ -186,7 +188,7 @@ export class UnitTestManagementService implements ITestManagementService, Dispos
             this.testResultDisplay.enabled = true;
         }
         this.autoDiscoverTests(workspaceUri).catch((ex) =>
-            traceError('Failed to auto discover tests upon activation', ex)
+            traceError('Failed to auto discover tests upon activation', ex),
         );
     }
 
@@ -195,7 +197,7 @@ export class UnitTestManagementService implements ITestManagementService, Dispos
         if (!testManager) {
             return;
         }
-        const tests = await testManager.discoverTests(CommandSource.auto, false, true);
+        const tests = await testManager.discoverTests(constants.CommandSource.auto, false, true);
         if (!tests || !Array.isArray(tests.testFiles) || tests.testFiles.length === 0) {
             return;
         }
@@ -207,8 +209,8 @@ export class UnitTestManagementService implements ITestManagementService, Dispos
             clearTimeout(this.autoDiscoverTimer as any);
         }
         this.autoDiscoverTimer = setTimeout(
-            () => this.discoverTests(CommandSource.auto, doc.uri, true, false, true),
-            1000
+            () => this.discoverTests(constants.CommandSource.auto, doc.uri, true, false, true),
+            1000,
         );
     }
     public async autoDiscoverTests(resource: Resource) {
@@ -229,15 +231,15 @@ export class UnitTestManagementService implements ITestManagementService, Dispos
             return;
         }
 
-        this.discoverTests(CommandSource.auto, resource, true).ignoreErrors();
+        this.discoverTests(constants.CommandSource.auto, resource, true).ignoreErrors();
     }
     public async discoverTests(
-        cmdSource: CommandSource,
+        cmdSource: constants.CommandSource,
         resource?: Uri,
         ignoreCache?: boolean,
         userInitiated?: boolean,
         quietMode?: boolean,
-        clearTestStatus?: boolean
+        clearTestStatus?: boolean,
     ) {
         const testManager = await this.getTestManager(true, resource);
         if (!testManager) {
@@ -256,7 +258,7 @@ export class UnitTestManagementService implements ITestManagementService, Dispos
             ignoreCache,
             quietMode,
             userInitiated,
-            clearTestStatus
+            clearTestStatus,
         );
         this.testResultDisplay
             .displayDiscoverStatus(discoveryPromise, quietMode)
@@ -279,7 +281,7 @@ export class UnitTestManagementService implements ITestManagementService, Dispos
         const testDisplay = this.serviceContainer.get<ITestDisplay>(ITestDisplay);
         testDisplay.displayStopTestUI(testManager.workspaceFolder, message);
     }
-    public async displayUI(cmdSource: CommandSource) {
+    public async displayUI(cmdSource: constants.CommandSource) {
         const testManager = await this.getTestManager(true);
         if (!testManager) {
             return;
@@ -288,7 +290,12 @@ export class UnitTestManagementService implements ITestManagementService, Dispos
         const testDisplay = this.serviceContainer.get<ITestDisplay>(ITestDisplay);
         testDisplay.displayTestUI(cmdSource, testManager.workspaceFolder);
     }
-    public async displayPickerUI(cmdSource: CommandSource, file: Uri, testFunctions: TestFunction[], debug?: boolean) {
+    public async displayPickerUI(
+        cmdSource: constants.CommandSource,
+        file: Uri,
+        testFunctions: TestFunction[],
+        debug?: boolean,
+    ) {
         const testManager = await this.getTestManager(true, file);
         if (!testManager) {
             return;
@@ -301,14 +308,14 @@ export class UnitTestManagementService implements ITestManagementService, Dispos
             testManager.workingDirectory,
             file,
             testFunctions,
-            debug
+            debug,
         );
     }
     public async runParametrizedTests(
-        cmdSource: CommandSource,
+        cmdSource: constants.CommandSource,
         resource: Uri,
         testFunctions: TestFunction[],
-        debug?: boolean
+        debug?: boolean,
     ) {
         const testManager = await this.getTestManager(true, resource);
         if (!testManager) {
@@ -316,11 +323,11 @@ export class UnitTestManagementService implements ITestManagementService, Dispos
         }
         await this.runTestsImpl(cmdSource, resource, { testFunction: testFunctions }, undefined, debug);
     }
-    public viewOutput(_cmdSource: CommandSource) {
+    public viewOutput(_cmdSource: constants.CommandSource) {
         sendTelemetryEvent(EventName.UNITTEST_VIEW_OUTPUT);
         this.outputChannel.show();
     }
-    public async selectAndRunTestMethod(cmdSource: CommandSource, resource: Uri, debug?: boolean) {
+    public async selectAndRunTestMethod(cmdSource: constants.CommandSource, resource: Uri, debug?: boolean) {
         const testManager = await this.getTestManager(true, resource);
         if (!testManager) {
             return;
@@ -332,7 +339,7 @@ export class UnitTestManagementService implements ITestManagementService, Dispos
         }
 
         const testCollectionStorage = this.serviceContainer.get<ITestCollectionStorageService>(
-            ITestCollectionStorageService
+            ITestCollectionStorageService,
         );
         const tests = testCollectionStorage.getTests(testManager.workspaceFolder)!;
         const testDisplay = this.serviceContainer.get<ITestDisplay>(ITestDisplay);
@@ -340,17 +347,17 @@ export class UnitTestManagementService implements ITestManagementService, Dispos
         if (!selectedTestFn) {
             return;
         }
-        // tslint:disable-next-line:prefer-type-cast
+
         await this.runTestsImpl(
             cmdSource,
             testManager.workspaceFolder,
-            // tslint:disable-next-line:no-object-literal-type-assertion
+
             { testFunction: [selectedTestFn.testFunction] } as TestsToRun,
             false,
-            debug
+            debug,
         );
     }
-    public async selectAndRunTestFile(cmdSource: CommandSource) {
+    public async selectAndRunTestFile(cmdSource: constants.CommandSource) {
         const testManager = await this.getTestManager(true);
         if (!testManager) {
             return;
@@ -362,7 +369,7 @@ export class UnitTestManagementService implements ITestManagementService, Dispos
         }
 
         const testCollectionStorage = this.serviceContainer.get<ITestCollectionStorageService>(
-            ITestCollectionStorageService
+            ITestCollectionStorageService,
         );
         const tests = testCollectionStorage.getTests(testManager.workspaceFolder)!;
         const testDisplay = this.serviceContainer.get<ITestDisplay>(ITestDisplay);
@@ -372,7 +379,7 @@ export class UnitTestManagementService implements ITestManagementService, Dispos
         }
         await this.runTestsImpl(cmdSource, testManager.workspaceFolder, { testFile: [selectedFile] });
     }
-    public async runCurrentTestFile(cmdSource: CommandSource) {
+    public async runCurrentTestFile(cmdSource: constants.CommandSource) {
         if (!this.documentManager.activeTextEditor) {
             return;
         }
@@ -386,7 +393,7 @@ export class UnitTestManagementService implements ITestManagementService, Dispos
             return;
         }
         const testCollectionStorage = this.serviceContainer.get<ITestCollectionStorageService>(
-            ITestCollectionStorageService
+            ITestCollectionStorageService,
         );
         const tests = testCollectionStorage.getTests(testManager.workspaceFolder)!;
         const testFiles = tests.testFiles.filter((testFile) => {
@@ -399,11 +406,11 @@ export class UnitTestManagementService implements ITestManagementService, Dispos
     }
 
     public async runTestsImpl(
-        cmdSource: CommandSource,
+        cmdSource: constants.CommandSource,
         resource?: Uri,
         testsToRun?: TestsToRun,
         runFailedTests?: boolean,
-        debug: boolean = false
+        debug: boolean = false,
     ) {
         const testManager = await this.getTestManager(true, resource);
         if (!testManager) {
@@ -427,7 +434,7 @@ export class UnitTestManagementService implements ITestManagementService, Dispos
 
     public async registerSymbolProvider(symbolProvider: DocumentSymbolProvider): Promise<void> {
         const testCollectionStorage = this.serviceContainer.get<ITestCollectionStorageService>(
-            ITestCollectionStorageService
+            ITestCollectionStorageService,
         );
         const event = new EventEmitter<void>();
         this.disposableRegistry.push(event);
@@ -438,7 +445,7 @@ export class UnitTestManagementService implements ITestManagementService, Dispos
         });
         this.disposableRegistry.push(handler);
         this.disposableRegistry.push(
-            activateCodeLenses(event, symbolProvider, testCollectionStorage, this.serviceContainer)
+            activateCodeLenses(event, symbolProvider, testCollectionStorage, this.serviceContainer),
         );
     }
 
@@ -458,7 +465,7 @@ export class UnitTestManagementService implements ITestManagementService, Dispos
         const configurationService = this.serviceContainer.get<ITestConfigurationService>(ITestConfigurationService);
         await configurationService.promptToEnableAndConfigureTestFramework(wkspace!);
     }
-    // tslint:disable-next-line: max-func-body-length
+
     public registerCommands(): void {
         const disposablesRegistry = this.serviceContainer.get<Disposable[]>(IDisposableRegistry);
         const commandManager = this.serviceContainer.get<ICommandManager>(ICommandManager);
@@ -468,124 +475,127 @@ export class UnitTestManagementService implements ITestManagementService, Dispos
                 constants.Commands.Tests_Discover,
                 (
                     treeNode?: TestWorkspaceFolder,
-                    cmdSource: CommandSource = CommandSource.commandPalette,
-                    resource?: Uri
+                    cmdSource: constants.CommandSource = constants.CommandSource.commandPalette,
+                    resource?: Uri,
                 ) => {
                     if (treeNode && treeNode instanceof TestWorkspaceFolder) {
                         resource = treeNode.resource;
-                        cmdSource = CommandSource.testExplorer;
+                        cmdSource = constants.CommandSource.testExplorer;
                     }
                     // Ignore the exceptions returned.
                     // This command will be invoked from other places of the extension.
                     return this.discoverTests(cmdSource, resource, true, true, false, true).ignoreErrors();
-                }
+                },
             ),
             commandManager.registerCommand(
                 constants.Commands.Tests_Configure,
-                (_, _cmdSource: CommandSource = CommandSource.commandPalette, resource?: Uri) => {
+                (_, _cmdSource: constants.CommandSource = constants.CommandSource.commandPalette, resource?: Uri) => {
                     // Ignore the exceptions returned.
                     // This command will be invoked from other places of the extension.
                     this.configureTests(resource).ignoreErrors();
-                }
+                },
             ),
             commandManager.registerCommand(
                 constants.Commands.Tests_Run_Failed,
-                (_, cmdSource: CommandSource = CommandSource.commandPalette, resource: Uri) =>
-                    this.runTestsImpl(cmdSource, resource, undefined, true)
+                (_, cmdSource: constants.CommandSource = constants.CommandSource.commandPalette, resource: Uri) =>
+                    this.runTestsImpl(cmdSource, resource, undefined, true),
             ),
             commandManager.registerCommand(
                 constants.Commands.Tests_Run,
                 (
                     treeNode?: TestWorkspaceFolder,
-                    cmdSource: CommandSource = CommandSource.commandPalette,
+                    cmdSource: constants.CommandSource = constants.CommandSource.commandPalette,
                     resource?: Uri,
-                    testToRun?: TestsToRun
+                    testToRun?: TestsToRun,
                 ) => {
                     if (treeNode && treeNode instanceof TestWorkspaceFolder) {
                         resource = treeNode.resource;
-                        cmdSource = CommandSource.testExplorer;
+                        cmdSource = constants.CommandSource.testExplorer;
                     }
                     return this.runTestsImpl(cmdSource, resource, testToRun);
-                }
+                },
             ),
             commandManager.registerCommand(
                 constants.Commands.Tests_Debug,
                 (
                     treeNode?: TestWorkspaceFolder,
-                    cmdSource: CommandSource = CommandSource.commandPalette,
+                    cmdSource: constants.CommandSource = constants.CommandSource.commandPalette,
                     resource?: Uri,
-                    testToRun?: TestsToRun
+                    testToRun?: TestsToRun,
                 ) => {
                     if (treeNode && treeNode instanceof TestWorkspaceFolder) {
                         resource = treeNode.resource;
-                        cmdSource = CommandSource.testExplorer;
+                        cmdSource = constants.CommandSource.testExplorer;
                     }
                     return this.runTestsImpl(cmdSource, resource, testToRun, false, true);
-                }
+                },
             ),
             commandManager.registerCommand(constants.Commands.Tests_View_UI, () =>
-                this.displayUI(CommandSource.commandPalette)
+                this.displayUI(constants.CommandSource.commandPalette),
             ),
             commandManager.registerCommand(
                 constants.Commands.Tests_Picker_UI,
                 (
                     _,
-                    cmdSource: CommandSource = CommandSource.commandPalette,
+                    cmdSource: constants.CommandSource = constants.CommandSource.commandPalette,
                     file: Uri,
-                    testFunctions: TestFunction[]
-                ) => this.displayPickerUI(cmdSource, file, testFunctions)
+                    testFunctions: TestFunction[],
+                ) => this.displayPickerUI(cmdSource, file, testFunctions),
             ),
             commandManager.registerCommand(
                 constants.Commands.Tests_Picker_UI_Debug,
                 (
                     _,
-                    cmdSource: CommandSource = CommandSource.commandPalette,
+                    cmdSource: constants.CommandSource = constants.CommandSource.commandPalette,
                     file: Uri,
-                    testFunctions: TestFunction[]
-                ) => this.displayPickerUI(cmdSource, file, testFunctions, true)
+                    testFunctions: TestFunction[],
+                ) => this.displayPickerUI(cmdSource, file, testFunctions, true),
             ),
             commandManager.registerCommand(
                 constants.Commands.Tests_Run_Parametrized,
                 (
                     _,
-                    cmdSource: CommandSource = CommandSource.commandPalette,
+                    cmdSource: constants.CommandSource = constants.CommandSource.commandPalette,
                     resource: Uri,
                     testFunctions: TestFunction[],
-                    debug: boolean
-                ) => this.runParametrizedTests(cmdSource, resource, testFunctions, debug)
+                    debug: boolean,
+                ) => this.runParametrizedTests(cmdSource, resource, testFunctions, debug),
             ),
             commandManager.registerCommand(constants.Commands.Tests_Stop, (_, resource: Uri) =>
-                this.stopTests(resource)
+                this.stopTests(resource),
             ),
             commandManager.registerCommand(
                 constants.Commands.Tests_ViewOutput,
-                (_, cmdSource: CommandSource = CommandSource.commandPalette) => this.viewOutput(cmdSource)
+                (_, cmdSource: constants.CommandSource = constants.CommandSource.commandPalette) =>
+                    this.viewOutput(cmdSource),
             ),
             commandManager.registerCommand(constants.Commands.Tests_Ask_To_Stop_Discovery, () =>
-                this.displayStopUI('Stop discovering tests')
+                this.displayStopUI('Stop discovering tests'),
             ),
             commandManager.registerCommand(constants.Commands.Tests_Ask_To_Stop_Test, () =>
-                this.displayStopUI('Stop running tests')
+                this.displayStopUI('Stop running tests'),
             ),
             commandManager.registerCommand(
                 constants.Commands.Tests_Select_And_Run_Method,
-                (_, cmdSource: CommandSource = CommandSource.commandPalette, resource: Uri) =>
-                    this.selectAndRunTestMethod(cmdSource, resource)
+                (_, cmdSource: constants.CommandSource = constants.CommandSource.commandPalette, resource: Uri) =>
+                    this.selectAndRunTestMethod(cmdSource, resource),
             ),
             commandManager.registerCommand(
                 constants.Commands.Tests_Select_And_Debug_Method,
-                (_, cmdSource: CommandSource = CommandSource.commandPalette, resource: Uri) =>
-                    this.selectAndRunTestMethod(cmdSource, resource, true)
+                (_, cmdSource: constants.CommandSource = constants.CommandSource.commandPalette, resource: Uri) =>
+                    this.selectAndRunTestMethod(cmdSource, resource, true),
             ),
             commandManager.registerCommand(
                 constants.Commands.Tests_Select_And_Run_File,
-                (_, cmdSource: CommandSource = CommandSource.commandPalette) => this.selectAndRunTestFile(cmdSource)
+                (_, cmdSource: constants.CommandSource = constants.CommandSource.commandPalette) =>
+                    this.selectAndRunTestFile(cmdSource),
             ),
             commandManager.registerCommand(
                 constants.Commands.Tests_Run_Current_File,
-                (_, cmdSource: CommandSource = CommandSource.commandPalette) => this.runCurrentTestFile(cmdSource)
+                (_, cmdSource: constants.CommandSource = constants.CommandSource.commandPalette) =>
+                    this.runCurrentTestFile(cmdSource),
             ),
-            commandManager.registerCommand(constants.Commands.Tests_Discovering, noop)
+            commandManager.registerCommand(constants.Commands.Tests_Discovering, noop),
         ];
 
         disposablesRegistry.push(...disposables);
@@ -608,14 +618,14 @@ export class UnitTestManagementService implements ITestManagementService, Dispos
                     clearTimeout(this.configChangedTimer as any);
                 }
                 this.configChangedTimer = setTimeout(() => this.configurationChangeHandler(e), 1000);
-            })
+            }),
         );
         this.disposableRegistry.push(
             interpreterService.onDidChangeInterpreter(() =>
                 this.autoDiscoverTests(undefined).catch((ex) =>
-                    traceError('Failed to auto discover tests upon changing interpreter', ex)
-                )
-            )
+                    traceError('Failed to auto discover tests upon changing interpreter', ex),
+                ),
+            ),
         );
     }
 }

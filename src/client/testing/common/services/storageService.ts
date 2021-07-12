@@ -2,14 +2,15 @@ import { inject, injectable } from 'inversify';
 import { Disposable, Event, EventEmitter, Uri } from 'vscode';
 import { IWorkspaceService } from '../../../common/application/types';
 import { IDisposableRegistry } from '../../../common/types';
-import { TestDataItem } from '../../types';
+import {} from '../../types';
 import {
     FlattenedTestFunction,
     FlattenedTestSuite,
     ITestCollectionStorageService,
+    TestDataItem,
     TestFunction,
     Tests,
-    TestSuite
+    TestSuite,
 } from './../types';
 
 @injectable()
@@ -19,7 +20,7 @@ export class TestCollectionStorageService implements ITestCollectionStorageServi
 
     constructor(
         @inject(IDisposableRegistry) disposables: Disposable[],
-        @inject(IWorkspaceService) private readonly workspaceService: IWorkspaceService
+        @inject(IWorkspaceService) private readonly workspaceService: IWorkspaceService,
     ) {
         disposables.push(this);
     }

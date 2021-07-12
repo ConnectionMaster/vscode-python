@@ -5,15 +5,10 @@
 
 import { IExtensionActivationService, IExtensionSingleActivationService } from '../activation/types';
 import { IServiceManager } from '../ioc/types';
-import { PreWarmActivatedEnvironmentVariables } from './activation/preWarmVariables';
 import { EnvironmentActivationService } from './activation/service';
-import { TerminalEnvironmentActivationService } from './activation/terminalEnvironmentActivationService';
 import { IEnvironmentActivationService } from './activation/types';
 import { InterpreterAutoSelectionService } from './autoSelection/index';
-import { InterpreterEvaluation } from './autoSelection/interpreterSecurity/interpreterEvaluation';
-import { InterpreterSecurityService } from './autoSelection/interpreterSecurity/interpreterSecurityService';
-import { InterpreterSecurityStorage } from './autoSelection/interpreterSecurity/interpreterSecurityStorage';
-import { InterpreterAutoSeletionProxyService } from './autoSelection/proxy';
+import { InterpreterAutoSelectionProxyService } from './autoSelection/proxy';
 import { CachedInterpretersAutoSelectionRule } from './autoSelection/rules/cached';
 import { CurrentPathInterpretersAutoSelectionRule } from './autoSelection/rules/currentPath';
 import { SettingsInterpretersAutoSelectionRule } from './autoSelection/rules/settings';
@@ -24,11 +19,9 @@ import {
     AutoSelectionRule,
     IInterpreterAutoSelectionRule,
     IInterpreterAutoSelectionService,
-    IInterpreterAutoSeletionProxyService,
-    IInterpreterEvaluation,
-    IInterpreterSecurityService,
-    IInterpreterSecurityStorage
+    IInterpreterAutoSelectionProxyService,
 } from './autoSelection/types';
+import { EnvironmentTypeComparer } from './configuration/environmentTypeComparer';
 import { InterpreterComparer } from './configuration/interpreterComparer';
 import { ResetInterpreterCommand } from './configuration/interpreterSelector/commands/resetInterpreter';
 import { SetInterpreterCommand } from './configuration/interpreterSelector/commands/setInterpreter';
@@ -39,64 +32,48 @@ import { PythonPathUpdaterServiceFactory } from './configuration/pythonPathUpdat
 import {
     IInterpreterComparer,
     IInterpreterSelector,
+    InterpreterComparisonType,
     IPythonPathUpdaterServiceFactory,
-    IPythonPathUpdaterServiceManager
+    IPythonPathUpdaterServiceManager,
 } from './configuration/types';
 import {
     IInterpreterDisplay,
     IInterpreterHelper,
-    IInterpreterLocatorProgressHandler,
     IInterpreterService,
-    IInterpreterStatusbarVisibilityFilter,
     IInterpreterVersionService,
-    IShebangCodeLensProvider
+    IShebangCodeLensProvider,
 } from './contracts';
-import { AlwaysDisplayStatusBar, InterpreterDisplay } from './display';
-import { InterpreterSelectionTip } from './display/interpreterSelectionTip';
+import { InterpreterDisplay } from './display';
 import { InterpreterLocatorProgressStatubarHandler } from './display/progressDisplay';
 import { ShebangCodeLensProvider } from './display/shebangCodeLensProvider';
 import { InterpreterHelper } from './helpers';
 import { InterpreterService } from './interpreterService';
 import { InterpreterVersionService } from './interpreterVersion';
 import { CondaInheritEnvPrompt } from './virtualEnvs/condaInheritEnvPrompt';
-import { VirtualEnvironmentManager } from './virtualEnvs/index';
-import { IVirtualEnvironmentManager } from './virtualEnvs/types';
 import { VirtualEnvironmentPrompt } from './virtualEnvs/virtualEnvPrompt';
 
 /**
  * Register all the new types inside this method.
- * This method is created for testing purposes. Registers all interpreter types except `IInterpreterAutoSeletionProxyService`, `IEnvironmentActivationService`.
+ * This method is created for testing purposes. Registers all interpreter types except `IInterpreterAutoSelectionProxyService`, `IEnvironmentActivationService`.
  * See use case in `src\test\serviceRegistry.ts` for details
  * @param serviceManager
  */
-// tslint:disable-next-line: max-func-body-length
-export function registerInterpreterTypes(serviceManager: IServiceManager) {
-    serviceManager.addSingleton<IExtensionSingleActivationService>(
-        IExtensionSingleActivationService,
-        InterpreterSecurityStorage
-    );
-    serviceManager.addSingleton<IExtensionSingleActivationService>(
-        IExtensionSingleActivationService,
-        SetInterpreterCommand
-    );
-    serviceManager.addSingleton<IExtensionSingleActivationService>(
-        IExtensionSingleActivationService,
-        ResetInterpreterCommand
-    );
-    serviceManager.addSingleton<IExtensionSingleActivationService>(
-        IExtensionSingleActivationService,
-        SetShebangInterpreterCommand
-    );
-    serviceManager.addSingleton<IInterpreterEvaluation>(IInterpreterEvaluation, InterpreterEvaluation);
-    serviceManager.addSingleton<IInterpreterSecurityStorage>(IInterpreterSecurityStorage, InterpreterSecurityStorage);
-    serviceManager.addSingleton<IInterpreterSecurityService>(IInterpreterSecurityService, InterpreterSecurityService);
 
-    serviceManager.addSingleton<IVirtualEnvironmentManager>(IVirtualEnvironmentManager, VirtualEnvironmentManager);
-    serviceManager.addSingleton<IExtensionActivationService>(IExtensionActivationService, VirtualEnvironmentPrompt);
+export function registerInterpreterTypes(serviceManager: IServiceManager): void {
     serviceManager.addSingleton<IExtensionSingleActivationService>(
         IExtensionSingleActivationService,
-        InterpreterSelectionTip
+        SetInterpreterCommand,
     );
+    serviceManager.addSingleton<IExtensionSingleActivationService>(
+        IExtensionSingleActivationService,
+        ResetInterpreterCommand,
+    );
+    serviceManager.addSingleton<IExtensionSingleActivationService>(
+        IExtensionSingleActivationService,
+        SetShebangInterpreterCommand,
+    );
+
+    serviceManager.addSingleton<IExtensionActivationService>(IExtensionActivationService, VirtualEnvironmentPrompt);
 
     serviceManager.addSingleton<IInterpreterVersionService>(IInterpreterVersionService, InterpreterVersionService);
 
@@ -105,87 +82,83 @@ export function registerInterpreterTypes(serviceManager: IServiceManager) {
 
     serviceManager.addSingleton<IPythonPathUpdaterServiceFactory>(
         IPythonPathUpdaterServiceFactory,
-        PythonPathUpdaterServiceFactory
+        PythonPathUpdaterServiceFactory,
     );
     serviceManager.addSingleton<IPythonPathUpdaterServiceManager>(
         IPythonPathUpdaterServiceManager,
-        PythonPathUpdaterService
+        PythonPathUpdaterService,
     );
 
     serviceManager.addSingleton<IInterpreterSelector>(IInterpreterSelector, InterpreterSelector);
     serviceManager.addSingleton<IShebangCodeLensProvider>(IShebangCodeLensProvider, ShebangCodeLensProvider);
     serviceManager.addSingleton<IInterpreterHelper>(IInterpreterHelper, InterpreterHelper);
 
-    serviceManager.addSingleton<IInterpreterComparer>(IInterpreterComparer, InterpreterComparer);
+    serviceManager.addSingleton<IInterpreterComparer>(
+        IInterpreterComparer,
+        InterpreterComparer,
+        InterpreterComparisonType.Default,
+    );
+    serviceManager.addSingleton<IInterpreterComparer>(
+        IInterpreterComparer,
+        EnvironmentTypeComparer,
+        InterpreterComparisonType.EnvType,
+    );
 
-    serviceManager.addSingleton<IInterpreterLocatorProgressHandler>(
-        IInterpreterLocatorProgressHandler,
-        InterpreterLocatorProgressStatubarHandler
+    serviceManager.addSingleton<IExtensionSingleActivationService>(
+        IExtensionSingleActivationService,
+        InterpreterLocatorProgressStatubarHandler,
     );
 
     serviceManager.addSingleton<IInterpreterAutoSelectionRule>(
         IInterpreterAutoSelectionRule,
         CurrentPathInterpretersAutoSelectionRule,
-        AutoSelectionRule.currentPath
+        AutoSelectionRule.currentPath,
     );
     serviceManager.addSingleton<IInterpreterAutoSelectionRule>(
         IInterpreterAutoSelectionRule,
         SystemWideInterpretersAutoSelectionRule,
-        AutoSelectionRule.systemWide
+        AutoSelectionRule.systemWide,
     );
     serviceManager.addSingleton<IInterpreterAutoSelectionRule>(
         IInterpreterAutoSelectionRule,
         WindowsRegistryInterpretersAutoSelectionRule,
-        AutoSelectionRule.windowsRegistry
+        AutoSelectionRule.windowsRegistry,
     );
     serviceManager.addSingleton<IInterpreterAutoSelectionRule>(
         IInterpreterAutoSelectionRule,
         WorkspaceVirtualEnvInterpretersAutoSelectionRule,
-        AutoSelectionRule.workspaceVirtualEnvs
+        AutoSelectionRule.workspaceVirtualEnvs,
     );
     serviceManager.addSingleton<IInterpreterAutoSelectionRule>(
         IInterpreterAutoSelectionRule,
         CachedInterpretersAutoSelectionRule,
-        AutoSelectionRule.cachedInterpreters
+        AutoSelectionRule.cachedInterpreters,
     );
     serviceManager.addSingleton<IInterpreterAutoSelectionRule>(
         IInterpreterAutoSelectionRule,
         SettingsInterpretersAutoSelectionRule,
-        AutoSelectionRule.settings
+        AutoSelectionRule.settings,
     );
     serviceManager.addSingleton<IInterpreterAutoSelectionService>(
         IInterpreterAutoSelectionService,
-        InterpreterAutoSelectionService
+        InterpreterAutoSelectionService,
     );
 
     serviceManager.addSingleton<IExtensionActivationService>(IExtensionActivationService, CondaInheritEnvPrompt);
-
-    serviceManager.addSingleton<IExtensionSingleActivationService>(
-        IExtensionSingleActivationService,
-        PreWarmActivatedEnvironmentVariables
-    );
-    serviceManager.addSingleton<IInterpreterStatusbarVisibilityFilter>(
-        IInterpreterStatusbarVisibilityFilter,
-        AlwaysDisplayStatusBar
-    );
 }
 
-export function registerTypes(serviceManager: IServiceManager) {
+export function registerTypes(serviceManager: IServiceManager): void {
     registerInterpreterTypes(serviceManager);
-    serviceManager.addSingleton<IInterpreterAutoSeletionProxyService>(
-        IInterpreterAutoSeletionProxyService,
-        InterpreterAutoSeletionProxyService
+    serviceManager.addSingleton<IInterpreterAutoSelectionProxyService>(
+        IInterpreterAutoSelectionProxyService,
+        InterpreterAutoSelectionProxyService,
     );
     serviceManager.addSingleton<IEnvironmentActivationService>(
         EnvironmentActivationService,
-        EnvironmentActivationService
-    );
-    serviceManager.addSingleton<IEnvironmentActivationService>(
-        TerminalEnvironmentActivationService,
-        TerminalEnvironmentActivationService
+        EnvironmentActivationService,
     );
     serviceManager.addSingleton<IEnvironmentActivationService>(
         IEnvironmentActivationService,
-        EnvironmentActivationService
+        EnvironmentActivationService,
     );
 }

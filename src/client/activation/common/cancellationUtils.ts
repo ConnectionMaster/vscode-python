@@ -1,3 +1,4 @@
+/* eslint-disable max-classes-per-file */
 /*
  * cancellationUtils.ts
  * Copyright (c) Microsoft Corporation.
@@ -15,7 +16,7 @@ import {
     CancellationSenderStrategy,
     CancellationStrategy,
     Disposable,
-    MessageConnection
+    MessageConnection,
 } from 'vscode-languageclient/node';
 
 type CancellationId = string | number;
@@ -32,7 +33,7 @@ function tryRun(callback: () => void) {
     try {
         callback();
     } catch (e) {
-        // tslint:disable-next-line: no-empty
+        // No body.
     }
 }
 
@@ -80,6 +81,7 @@ export class FileBasedCancellationStrategy implements CancellationStrategy, Disp
         this._sender = new FileCancellationSenderStrategy(folderName);
     }
 
+    // eslint-disable-next-line class-methods-use-this
     get receiver(): CancellationReceiverStrategy {
         return CancellationReceiverStrategy.Message;
     }

@@ -30,7 +30,7 @@ export class Prospector extends BaseLinter {
     }
 
     protected async runLinter(document: TextDocument, cancellation: CancellationToken): Promise<ILintMessage[]> {
-        const cwd = this.getWorkspaceRootPath(document);
+        const cwd = this.getWorkingDirectoryPath(document);
         const relativePath = path.relative(cwd, document.uri.fsPath);
         return this.run(['--absolute-paths', '--output-format=json', relativePath], document, cancellation);
     }
@@ -55,7 +55,7 @@ export class Prospector extends BaseLinter {
                     column: msg.location.character,
                     line: lineNumber,
                     type: msg.code,
-                    provider: `${this.info.id} - ${msg.source}`
+                    provider: `${this.info.id} - ${msg.source}`,
                 };
             });
     }

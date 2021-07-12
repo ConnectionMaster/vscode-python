@@ -8,15 +8,16 @@ import { traceError } from './common/logger';
 import { ITerminalHelper } from './common/terminal/types';
 import {
     IConfigurationService,
-    IExperimentsManager,
+    IExperimentService,
     IInterpreterPathService,
     InspectInterpreterSettingType,
-    Resource
+    Resource,
 } from './common/types';
+import { IStopWatch } from './common/utils/stopWatch';
 import {
     AutoSelectionRule,
     IInterpreterAutoSelectionRule,
-    IInterpreterAutoSelectionService
+    IInterpreterAutoSelectionService,
 } from './interpreter/autoSelection/types';
 import { ICondaService, IInterpreterService } from './interpreter/contracts';
 import { IServiceContainer } from './ioc/types';
@@ -24,17 +25,13 @@ import { PythonEnvironment } from './pythonEnvironments/info';
 import { sendTelemetryEvent } from './telemetry';
 import { EventName } from './telemetry/constants';
 import { EditorLoadTelemetry } from './telemetry/types';
-
-interface IStopWatch {
-    elapsedTime: number;
-}
+import { IStartupDurations } from './types';
 
 export async function sendStartupTelemetry(
-    // tslint:disable-next-line:no-any
     activatedPromise: Promise<any>,
-    durations: Record<string, number>,
+    durations: IStartupDurations,
     stopWatch: IStopWatch,
-    serviceContainer: IServiceContainer
+    serviceContainer: IServiceContainer,
 ) {
     if (isTestExecution()) {
         return;
@@ -42,7 +39,7 @@ export async function sendStartupTelemetry(
 
     try {
         await activatedPromise;
-        durations.totalActivateTime = stopWatch.elapsedTime;
+        durations.totalNonBlockingActivateTime = stopWatch.elapsedTime - durations.startActivateTime;
         const props = await getActivationTelemetryProps(serviceContainer);
         sendTelemetryEvent(EventName.EDITOR_LOAD, durations, props);
     } catch (ex) {
@@ -52,11 +49,10 @@ export async function sendStartupTelemetry(
 
 export async function sendErrorTelemetry(
     ex: Error,
-    durations: Record<string, number>,
-    serviceContainer?: IServiceContainer
+    durations: IStartupDurations,
+    serviceContainer?: IServiceContainer,
 ) {
     try {
-        // tslint:disable-next-line:no-any
         let props: any = {};
         if (serviceContainer) {
             try {
@@ -81,16 +77,15 @@ function isUsingGlobalInterpreterInWorkspace(currentPythonPath: string, serviceC
 }
 
 export function hasUserDefinedPythonPath(resource: Resource, serviceContainer: IServiceContainer) {
-    const abExperiments = serviceContainer.get<IExperimentsManager>(IExperimentsManager);
+    const abExperiments = serviceContainer.get<IExperimentService>(IExperimentService);
     const workspaceService = serviceContainer.get<IWorkspaceService>(IWorkspaceService);
     const interpreterPathService = serviceContainer.get<IInterpreterPathService>(IInterpreterPathService);
     let settings: InspectInterpreterSettingType;
-    if (abExperiments.inExperiment(DeprecatePythonPath.experiment)) {
+    if (abExperiments.inExperimentSync(DeprecatePythonPath.experiment)) {
         settings = interpreterPathService.inspect(resource);
     } else {
         settings = workspaceService.getConfiguration('python', resource)!.inspect<string>('pythonPath')!;
     }
-    abExperiments.sendTelemetryIfInExperiment(DeprecatePythonPath.control);
     return (settings.workspaceFolderValue && settings.workspaceFolderValue !== 'python') ||
         (settings.workspaceValue && settings.workspaceValue !== 'python') ||
         (settings.globalValue && settings.globalValue !== 'python')
@@ -101,16 +96,15 @@ export function hasUserDefinedPythonPath(resource: Resource, serviceContainer: I
 function getPreferredWorkspaceInterpreter(resource: Resource, serviceContainer: IServiceContainer) {
     const workspaceInterpreterSelector = serviceContainer.get<IInterpreterAutoSelectionRule>(
         IInterpreterAutoSelectionRule,
-        AutoSelectionRule.workspaceVirtualEnvs
+        AutoSelectionRule.workspaceVirtualEnvs,
     );
     const interpreter = workspaceInterpreterSelector.getPreviouslyAutoSelectedInterpreter(resource);
     return interpreter ? interpreter.path : undefined;
 }
 
 async function getActivationTelemetryProps(serviceContainer: IServiceContainer): Promise<EditorLoadTelemetry> {
-    // tslint:disable-next-line:no-suspicious-comment
     // TODO: Not all of this data is showing up in the database...
-    // tslint:disable-next-line:no-suspicious-comment
+
     // TODO: If any one of these parts fails we send no info.  We should
     // be able to partially populate as much as possible instead
     // (through granular try-catch statements).
@@ -130,7 +124,7 @@ async function getActivationTelemetryProps(serviceContainer: IServiceContainer):
             .then((ver) => (ver ? ver.raw : ''))
             .catch<string>(() => ''),
         interpreterService.getActiveInterpreter().catch<PythonEnvironment | undefined>(() => undefined),
-        interpreterService.getInterpreters(mainWorkspaceUri).catch<PythonEnvironment[]>(() => [])
+        interpreterService.getInterpreters(mainWorkspaceUri).catch<PythonEnvironment[]>(() => []),
     ]);
     const workspaceFolderCount = workspaceService.hasWorkspaceFolders ? workspaceService.workspaceFolders!.length : 0;
     const pythonVersion = interpreter && interpreter.version ? interpreter.version.raw : undefined;
@@ -153,6 +147,6 @@ async function getActivationTelemetryProps(serviceContainer: IServiceContainer):
         hasPython3,
         usingUserDefinedInterpreter,
         usingAutoSelectedWorkspaceInterpreter,
-        usingGlobalInterpreter
+        usingGlobalInterpreter,
     };
 }

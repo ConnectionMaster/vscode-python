@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 import { inject, injectable } from 'inversify';
-// tslint:disable-next-line: import-name
+
 import { IWorkspaceService } from '../../common/application/types';
 import { IFileSystem } from '../../common/platform/types';
 import { IConfigurationService, Resource } from '../../common/types';
@@ -19,15 +19,17 @@ import { ILanguageServerManager } from '../types';
  */
 @injectable()
 export class JediLanguageServerActivator extends LanguageServerActivatorBase {
+    // eslint-disable-next-line @typescript-eslint/no-useless-constructor
     constructor(
         @inject(ILanguageServerManager) manager: ILanguageServerManager,
         @inject(IWorkspaceService) workspace: IWorkspaceService,
         @inject(IFileSystem) fs: IFileSystem,
-        @inject(IConfigurationService) configurationService: IConfigurationService
+        @inject(IConfigurationService) configurationService: IConfigurationService,
     ) {
         super(manager, workspace, fs, configurationService);
     }
 
+    // eslint-disable-next-line class-methods-use-this
     public async ensureLanguageServerIsAvailable(_resource: Resource): Promise<void> {
         // Nothing to do here. Jedi language server is shipped with the extension
     }

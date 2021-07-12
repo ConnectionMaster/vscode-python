@@ -1,42 +1,44 @@
-// tslint:disable:max-classes-per-file max-classes-per-file
+/* eslint-disable max-classes-per-file */
 
 import { inject, injectable, named } from 'inversify';
 import * as os from 'os';
+import * as semver from 'semver';
 import { CancellationToken, OutputChannel, Uri } from 'vscode';
-import '../../common/extensions';
+import '../extensions';
 import { IInterpreterService } from '../../interpreter/contracts';
 import { IServiceContainer } from '../../ioc/types';
-import { ILinterManager, LinterId } from '../../linters/types';
-import { PythonEnvironment } from '../../pythonEnvironments/info';
+import { LinterId } from '../../linters/types';
+import { EnvironmentType, ModuleInstallerType, PythonEnvironment } from '../../pythonEnvironments/info';
 import { sendTelemetryEvent } from '../../telemetry';
 import { EventName } from '../../telemetry/constants';
 import { IApplicationShell, ICommandManager, IWorkspaceService } from '../application/types';
 import { Commands, STANDARD_OUTPUT_CHANNEL } from '../constants';
-import { LinterInstallationPromptVariants } from '../experiments/groups';
 import { traceError, traceInfo } from '../logger';
 import { IPlatformService } from '../platform/types';
 import { IProcessServiceFactory, IPythonExecutionFactory } from '../process/types';
 import { ITerminalServiceFactory } from '../terminal/types';
 import {
     IConfigurationService,
-    IExperimentsManager,
     IInstaller,
     InstallerResponse,
     IOutputChannel,
     IPersistentStateFactory,
+    ProductInstallStatus,
     ModuleNamePurpose,
     Product,
-    ProductType
+    ProductType,
 } from '../types';
 import { Common, Installer, Linters } from '../utils/localize';
 import { isResource, noop } from '../utils/misc';
+import { translateProductToModule } from './moduleInstaller';
 import { ProductNames } from './productNames';
 import {
     IInstallationChannelManager,
     IModuleInstaller,
     InterpreterUri,
     IProductPathService,
-    IProductService
+    IProductService,
+    ModuleInstallFlags,
 } from './types';
 
 export { Product } from '../types';
@@ -44,11 +46,22 @@ export { Product } from '../types';
 export const CTagsInstallationScript =
     os.platform() === 'darwin' ? 'brew install ctags' : 'sudo apt-get install exuberant-ctags';
 
-export abstract class BaseInstaller {
+// Products which may not be available to install from certain package registries, keyed by product name
+// Installer implementations can check this to determine a suitable installation channel for a product
+// This is temporary and can be removed when https://github.com/microsoft/vscode-jupyter/issues/5034 is unblocked
+const UnsupportedChannelsForProduct = new Map<Product, Set<EnvironmentType>>([
+    [Product.torchProfilerInstallName, new Set([EnvironmentType.Conda])],
+]);
+
+abstract class BaseInstaller {
     private static readonly PromptPromises = new Map<string, Promise<InstallerResponse>>();
+
     protected readonly appShell: IApplicationShell;
+
     protected readonly configService: IConfigurationService;
+
     protected readonly workspaceService: IWorkspaceService;
+
     private readonly productService: IProductService;
 
     constructor(protected serviceContainer: IServiceContainer, protected outputChannel: OutputChannel) {
@@ -61,7 +74,8 @@ export abstract class BaseInstaller {
     public promptToInstall(
         product: Product,
         resource?: InterpreterUri,
-        cancel?: CancellationToken
+        cancel?: CancellationToken,
+        flags?: ModuleInstallFlags,
     ): Promise<InstallerResponse> {
         // If this method gets called twice, while previous promise has not been resolved, then return that same promise.
         // E.g. previous promise is not resolved as a message has been displayed to the user, so no point displaying
@@ -72,7 +86,7 @@ export abstract class BaseInstaller {
         if (BaseInstaller.PromptPromises.has(key)) {
             return BaseInstaller.PromptPromises.get(key)!;
         }
-        const promise = this.promptToInstallImplementation(product, resource, cancel);
+        const promise = this.promptToInstallImplementation(product, resource, cancel, flags);
         BaseInstaller.PromptPromises.set(key, promise);
         promise.then(() => BaseInstaller.PromptPromises.delete(key)).ignoreErrors();
         promise.catch(() => BaseInstaller.PromptPromises.delete(key)).ignoreErrors();
@@ -83,7 +97,8 @@ export abstract class BaseInstaller {
     public async install(
         product: Product,
         resource?: InterpreterUri,
-        cancel?: CancellationToken
+        cancel?: CancellationToken,
+        flags?: ModuleInstallFlags,
     ): Promise<InstallerResponse> {
         if (product === Product.unittest) {
             return InstallerResponse.Installed;
@@ -92,20 +107,83 @@ export abstract class BaseInstaller {
         const channels = this.serviceContainer.get<IInstallationChannelManager>(IInstallationChannelManager);
         const installer = await channels.getInstallationChannel(product, resource);
         if (!installer) {
+            sendTelemetryEvent(EventName.PYTHON_INSTALL_PACKAGE, undefined, {
+                installer: 'unavailable',
+                productName: ProductNames.get(product),
+            });
             return InstallerResponse.Ignore;
         }
 
-        const moduleName = translateProductToModule(product, ModuleNamePurpose.install);
         await installer
-            .installModule(moduleName, resource, cancel)
-            .catch((ex) => traceError(`Error in installing the module '${moduleName}', ${ex}`));
+            .installModule(product, resource, cancel, flags)
+            .catch((ex) => traceError(`Error in installing the product '${ProductNames.get(product)}', ${ex}`));
 
-        return this.isInstalled(product, resource).then((isInstalled) =>
-            isInstalled ? InstallerResponse.Installed : InstallerResponse.Ignore
-        );
+        return this.isInstalled(product, resource).then((isInstalled) => {
+            sendTelemetryEvent(EventName.PYTHON_INSTALL_PACKAGE, undefined, {
+                installer: installer.displayName,
+                productName: ProductNames.get(product),
+                isInstalled,
+            });
+            return isInstalled ? InstallerResponse.Installed : InstallerResponse.Ignore;
+        });
     }
 
-    public async isInstalled(product: Product, resource?: InterpreterUri): Promise<boolean | undefined> {
+    /**
+     *
+     * @param product A product which supports SemVer versioning.
+     * @param semVerRequirement A SemVer version requirement.
+     * @param resource A URI or a PythonEnvironment.
+     */
+    public async isProductVersionCompatible(
+        product: Product,
+        semVerRequirement: string,
+        resource?: InterpreterUri,
+    ): Promise<ProductInstallStatus> {
+        const version = await this.getProductSemVer(product, resource);
+        if (!version) {
+            return ProductInstallStatus.NotInstalled;
+        }
+        if (semver.satisfies(version, semVerRequirement)) {
+            return ProductInstallStatus.Installed;
+        }
+        return ProductInstallStatus.NeedsUpgrade;
+    }
+
+    /**
+     *
+     * @param product A product which supports SemVer versioning.
+     * @param resource A URI or a PythonEnvironment.
+     */
+    private async getProductSemVer(product: Product, resource: InterpreterUri): Promise<semver.SemVer | null> {
+        const interpreter = isResource(resource) ? undefined : resource;
+        const uri = isResource(resource) ? resource : undefined;
+        const executableName = this.getExecutableNameFromSettings(product, uri);
+
+        const isModule = this.isExecutableAModule(product, uri);
+
+        let version;
+        if (isModule) {
+            const pythonProcess = await this.serviceContainer
+                .get<IPythonExecutionFactory>(IPythonExecutionFactory)
+                .createActivatedEnvironment({ resource: uri, interpreter, allowEnvironmentFetchExceptions: true });
+            version = await pythonProcess.getModuleVersion(executableName);
+        } else {
+            const process = await this.serviceContainer.get<IProcessServiceFactory>(IProcessServiceFactory).create(uri);
+            const result = await process.exec(executableName, ['--version'], { mergeStdOutErr: true });
+            version = result.stdout.trim();
+        }
+        if (!version) {
+            return null;
+        }
+        try {
+            return semver.coerce(version);
+        } catch (e) {
+            traceError(`Unable to parse version ${version} for product ${product}: `, e);
+            return null;
+        }
+    }
+
+    public async isInstalled(product: Product, resource?: InterpreterUri): Promise<boolean> {
         if (product === Product.unittest) {
             return true;
         }
@@ -120,25 +198,27 @@ export abstract class BaseInstaller {
                 .get<IPythonExecutionFactory>(IPythonExecutionFactory)
                 .createActivatedEnvironment({ resource: uri, interpreter, allowEnvironmentFetchExceptions: true });
             return pythonProcess.isModuleInstalled(executableName);
-        } else {
-            const process = await this.serviceContainer.get<IProcessServiceFactory>(IProcessServiceFactory).create(uri);
-            return process
-                .exec(executableName, ['--version'], { mergeStdOutErr: true })
-                .then(() => true)
-                .catch(() => false);
         }
+        const process = await this.serviceContainer.get<IProcessServiceFactory>(IProcessServiceFactory).create(uri);
+        return process
+            .exec(executableName, ['--version'], { mergeStdOutErr: true })
+            .then(() => true)
+            .catch(() => false);
     }
 
     protected abstract promptToInstallImplementation(
         product: Product,
         resource?: InterpreterUri,
-        cancel?: CancellationToken
+        cancel?: CancellationToken,
+        flags?: ModuleInstallFlags,
     ): Promise<InstallerResponse>;
+
     protected getExecutableNameFromSettings(product: Product, resource?: Uri): string {
         const productType = this.productService.getProductType(product);
         const productPathService = this.serviceContainer.get<IProductPathService>(IProductPathService, productType);
         return productPathService.getExecutableNameFromSettings(product, resource);
     }
+
     protected isExecutableAModule(product: Product, resource?: Uri): boolean {
         const productType = this.productService.getProductType(product);
         const productPathService = this.serviceContainer.get<IProductPathService>(IProductPathService, productType);
@@ -147,43 +227,40 @@ export abstract class BaseInstaller {
 }
 
 export class CTagsInstaller extends BaseInstaller {
-    constructor(serviceContainer: IServiceContainer, outputChannel: OutputChannel) {
-        super(serviceContainer, outputChannel);
-    }
-
     public async install(_product: Product, resource?: Uri): Promise<InstallerResponse> {
         if (this.serviceContainer.get<IPlatformService>(IPlatformService).isWindows) {
             this.outputChannel.appendLine('Install Universal Ctags Win32 to enable support for Workspace Symbols');
             this.outputChannel.appendLine('Download the CTags binary from the Universal CTags site.');
             this.outputChannel.appendLine(
-                'Option 1: Extract ctags.exe from the downloaded zip to any folder within your PATH so that Visual Studio Code can run it.'
+                'Option 1: Extract ctags.exe from the downloaded zip to any folder within your PATH so that Visual Studio Code can run it.',
             );
             this.outputChannel.appendLine(
-                'Option 2: Extract to any folder and add the path to this folder to the command setting.'
+                'Option 2: Extract to any folder and add the path to this folder to the command setting.',
             );
             this.outputChannel.appendLine(
-                'Option 3: Extract to any folder and define that path in the python.workspaceSymbols.ctagsPath setting of your user settings file (settings.json).'
+                'Option 3: Extract to any folder and define that path in the python.workspaceSymbols.ctagsPath setting of your user settings file (settings.json).',
             );
             this.outputChannel.show();
         } else {
             const terminalService = this.serviceContainer
                 .get<ITerminalServiceFactory>(ITerminalServiceFactory)
-                .getTerminalService(resource);
+                .getTerminalService({ resource });
             terminalService
                 .sendCommand(CTagsInstallationScript, [])
                 .catch((ex) => traceError(`Failed to install ctags. Script sent '${CTagsInstallationScript}', ${ex}`));
         }
         return InstallerResponse.Ignore;
     }
+
     protected async promptToInstallImplementation(
         product: Product,
         resource?: Uri,
-        _cancel?: CancellationToken
+        _cancel?: CancellationToken,
     ): Promise<InstallerResponse> {
         const item = await this.appShell.showErrorMessage(
             'Install CTags to enable Python workspace symbols?',
             'Yes',
-            'No'
+            'No',
         );
         return item === 'Yes' ? this.install(product, resource) : InstallerResponse.Ignore;
     }
@@ -193,7 +270,8 @@ export class FormatterInstaller extends BaseInstaller {
     protected async promptToInstallImplementation(
         product: Product,
         resource?: Uri,
-        cancel?: CancellationToken
+        cancel?: CancellationToken,
+        _flags?: ModuleInstallFlags,
     ): Promise<InstallerResponse> {
         // Hard-coded on purpose because the UI won't necessarily work having
         // another formatter.
@@ -216,7 +294,8 @@ export class FormatterInstaller extends BaseInstaller {
         const item = await this.appShell.showErrorMessage(message, ...options);
         if (item === yesChoice) {
             return this.install(product, resource, cancel);
-        } else if (typeof item === 'string') {
+        }
+        if (typeof item === 'string') {
             for (const formatter of formatters) {
                 const formatterName = ProductNames.get(formatter)!;
 
@@ -232,68 +311,20 @@ export class FormatterInstaller extends BaseInstaller {
 }
 
 export class LinterInstaller extends BaseInstaller {
-    // This is a hack, really we should be handling this in a service that
-    // controls the prompts we show. The issue here was that if we show
-    // a prompt to install pylint and flake8, and user selects flake8
-    // we immediately show this prompt again saying install flake8, while the
-    // installation is on going.
-    private static promptSeen: boolean = false;
-    private readonly experimentsManager: IExperimentsManager;
-    private readonly linterManager: ILinterManager;
-
     constructor(protected serviceContainer: IServiceContainer, protected outputChannel: OutputChannel) {
         super(serviceContainer, outputChannel);
-        this.experimentsManager = serviceContainer.get<IExperimentsManager>(IExperimentsManager);
-        this.linterManager = serviceContainer.get<ILinterManager>(ILinterManager);
-    }
-
-    public static reset() {
-        // Read notes where this is defined.
-        LinterInstaller.promptSeen = false;
     }
 
     protected async promptToInstallImplementation(
         product: Product,
         resource?: Uri,
-        cancel?: CancellationToken
+        cancel?: CancellationToken,
+        _flags?: ModuleInstallFlags,
     ): Promise<InstallerResponse> {
-        // This is a hack, really we should be handling this in a service that
-        // controls the prompts we show. The issue here was that if we show
-        // a prompt to install pylint and flake8, and user selects flake8
-        // we immediately show this prompt again saying install flake8, while the
-        // installation is on going.
-        if (LinterInstaller.promptSeen) {
-            return InstallerResponse.Ignore;
-        }
-
-        LinterInstaller.promptSeen = true;
-
-        // Conditions to use experiment prompt:
-        // 1. There should be no linter set in any scope
-        // 2. The default linter should be pylint
-
-        if (!this.isLinterSetInAnyScope() && product === Product.pylint) {
-            if (this.experimentsManager.inExperiment(LinterInstallationPromptVariants.noPrompt)) {
-                // We won't show a prompt, so tell the extension to treat as though user
-                // ignored the prompt.
-                sendTelemetryEvent(EventName.LINTER_INSTALL_PROMPT, undefined, {
-                    prompt: 'noPrompt'
-                });
-
-                const productName = ProductNames.get(product)!;
-                traceInfo(`Linter ${productName} is not installed.`);
-
-                return InstallerResponse.Ignore;
-            } else if (this.experimentsManager.inExperiment(LinterInstallationPromptVariants.pylintFirst)) {
-                return this.newPromptForInstallation(true, resource, cancel);
-            } else if (this.experimentsManager.inExperiment(LinterInstallationPromptVariants.flake8First)) {
-                return this.newPromptForInstallation(false, resource, cancel);
-            }
-        }
-
         sendTelemetryEvent(EventName.LINTER_INSTALL_PROMPT, undefined, {
-            prompt: 'old'
+            prompt: 'old',
         });
+
         return this.oldPromptForInstallation(product, resource, cancel);
     }
 
@@ -311,83 +342,18 @@ export class LinterInstaller extends BaseInstaller {
         return state.value === true;
     }
 
-    private async newPromptForInstallation(pylintFirst: boolean, resource?: Uri, cancel?: CancellationToken) {
-        const productName = ProductNames.get(Product.pylint)!;
-
-        // User has already set to ignore this prompt
-        const disableLinterInstallPromptKey = `${productName}_DisableLinterInstallPrompt`;
-        if (this.getStoredResponse(disableLinterInstallPromptKey) === true) {
-            return InstallerResponse.Ignore;
-        }
-
-        // Check if the linter settings has Pylint or flake8 pointing to executables.
-        // If the settings point to executables then we can't install. Defer to old Prompt.
-        if (
-            !this.isExecutableAModule(Product.pylint, resource) ||
-            !this.isExecutableAModule(Product.flake8, resource)
-        ) {
-            return this.oldPromptForInstallation(Product.pylint, resource, cancel);
-        }
-
-        const installPylint = Linters.installPylint();
-        const installFlake8 = Linters.installFlake8();
-        const doNotShowAgain = Common.doNotShowAgain();
-
-        const options = pylintFirst
-            ? [installPylint, installFlake8, doNotShowAgain]
-            : [installFlake8, installPylint, doNotShowAgain];
-        const message = Linters.installMessage();
-        const prompt = pylintFirst ? 'pylintFirst' : 'flake8first';
-
-        sendTelemetryEvent(EventName.LINTER_INSTALL_PROMPT, undefined, {
-            prompt
-        });
-
-        const response = await this.appShell.showInformationMessage(message, ...options);
-
-        if (response === installPylint) {
-            sendTelemetryEvent(EventName.LINTER_INSTALL_PROMPT_ACTION, undefined, {
-                prompt,
-                action: 'installPylint'
-            });
-            return this.install(Product.pylint, resource, cancel);
-        } else if (response === installFlake8) {
-            sendTelemetryEvent(EventName.LINTER_INSTALL_PROMPT_ACTION, undefined, {
-                prompt,
-                action: 'installFlake8'
-            });
-            await this.linterManager.setActiveLintersAsync([Product.flake8], resource);
-            return this.install(Product.flake8, resource, cancel);
-        } else if (response === doNotShowAgain) {
-            sendTelemetryEvent(EventName.LINTER_INSTALL_PROMPT_ACTION, undefined, {
-                prompt,
-                action: 'disablePrompt'
-            });
-            await this.setStoredResponse(disableLinterInstallPromptKey, true);
-            return InstallerResponse.Ignore;
-        }
-
-        sendTelemetryEvent(EventName.LINTER_INSTALL_PROMPT_ACTION, undefined, {
-            prompt,
-            action: 'close'
-        });
-        return InstallerResponse.Ignore;
-    }
-
     private async oldPromptForInstallation(product: Product, resource?: Uri, cancel?: CancellationToken) {
-        const isPylint = product === Product.pylint;
-
         const productName = ProductNames.get(product)!;
         const install = Common.install();
         const doNotShowAgain = Common.doNotShowAgain();
         const disableLinterInstallPromptKey = `${productName}_DisableLinterInstallPrompt`;
         const selectLinter = Linters.selectLinter();
 
-        if (isPylint && this.getStoredResponse(disableLinterInstallPromptKey) === true) {
+        if (this.getStoredResponse(disableLinterInstallPromptKey) === true) {
             return InstallerResponse.Ignore;
         }
 
-        const options = isPylint ? [selectLinter, doNotShowAgain] : [selectLinter];
+        const options = [selectLinter, doNotShowAgain];
 
         let message = `Linter ${productName} is not installed.`;
         if (this.isExecutableAModule(product, resource)) {
@@ -400,14 +366,15 @@ export class LinterInstaller extends BaseInstaller {
         if (response === install) {
             sendTelemetryEvent(EventName.LINTER_NOT_INSTALLED_PROMPT, undefined, {
                 tool: productName as LinterId,
-                action: 'install'
+                action: 'install',
             });
             return this.install(product, resource, cancel);
-        } else if (response === doNotShowAgain) {
+        }
+        if (response === doNotShowAgain) {
             await this.setStoredResponse(disableLinterInstallPromptKey, true);
             sendTelemetryEvent(EventName.LINTER_NOT_INSTALLED_PROMPT, undefined, {
                 tool: productName as LinterId,
-                action: 'disablePrompt'
+                action: 'disablePrompt',
             });
             return InstallerResponse.Ignore;
         }
@@ -418,36 +385,6 @@ export class LinterInstaller extends BaseInstaller {
             await commandManager.executeCommand(Commands.Set_Linter);
         }
         return InstallerResponse.Ignore;
-    }
-
-    private isLinterSetInAnyScope() {
-        const config = this.workspaceService.getConfiguration('python');
-        if (config) {
-            const keys = [
-                'linting.pylintEnabled',
-                'linting.flake8Enabled',
-                'linting.banditEnabled',
-                'linting.mypyEnabled',
-                'linting.pycodestyleEnabled',
-                'linting.prospectorEnabled',
-                'linting.pydocstyleEnabled',
-                'linting.pylamaEnabled'
-            ];
-
-            const values = keys.map((key) => {
-                const value = config.inspect<boolean>(key);
-                if (value) {
-                    if (value.globalValue || value.workspaceValue || value.workspaceFolderValue) {
-                        return 'linter set';
-                    }
-                }
-                return 'no info';
-            });
-
-            return values.includes('linter set');
-        }
-
-        return false;
     }
 
     /**
@@ -472,7 +409,8 @@ export class TestFrameworkInstaller extends BaseInstaller {
     protected async promptToInstallImplementation(
         product: Product,
         resource?: Uri,
-        cancel?: CancellationToken
+        cancel?: CancellationToken,
+        _flags?: ModuleInstallFlags,
     ): Promise<InstallerResponse> {
         const productName = ProductNames.get(product)!;
 
@@ -490,17 +428,18 @@ export class TestFrameworkInstaller extends BaseInstaller {
     }
 }
 
-export class RefactoringLibraryInstaller extends BaseInstaller {
+class RefactoringLibraryInstaller extends BaseInstaller {
     protected async promptToInstallImplementation(
         product: Product,
         resource?: Uri,
-        cancel?: CancellationToken
+        cancel?: CancellationToken,
+        _flags?: ModuleInstallFlags,
     ): Promise<InstallerResponse> {
         const productName = ProductNames.get(product)!;
         const item = await this.appShell.showErrorMessage(
             `Refactoring library ${productName} is not installed. Install?`,
             'Yes',
-            'No'
+            'No',
         );
         return item === 'Yes' ? this.install(product, resource, cancel) : InstallerResponse.Ignore;
     }
@@ -511,7 +450,8 @@ export class DataScienceInstaller extends BaseInstaller {
     public async install(
         product: Product,
         interpreterUri?: InterpreterUri,
-        cancel?: CancellationToken
+        cancel?: CancellationToken,
+        flags?: ModuleInstallFlags,
     ): Promise<InstallerResponse> {
         // Precondition
         if (isResource(interpreterUri)) {
@@ -524,30 +464,68 @@ export class DataScienceInstaller extends BaseInstaller {
         // Get a list of known installation channels, pip, conda, etc.
         const channels: IModuleInstaller[] = await this.serviceContainer
             .get<IInstallationChannelManager>(IInstallationChannelManager)
-            .getInstallationChannels();
+            .getInstallationChannels(interpreter);
 
         // Pick an installerModule based on whether the interpreter is conda or not. Default is pip.
-        let installerModule;
-        if (interpreter.envType === 'Conda') {
-            installerModule = channels.find((v) => v.name === 'Conda');
-        } else {
-            installerModule = channels.find((v) => v.name === 'Pip');
-        }
-
         const moduleName = translateProductToModule(product, ModuleNamePurpose.install);
+
+        const isAvailableThroughConda = !UnsupportedChannelsForProduct.get(product)?.has(EnvironmentType.Conda);
+        let requiredInstaller = ModuleInstallerType.Unknown;
+        if (interpreter.envType === EnvironmentType.Conda && isAvailableThroughConda) {
+            requiredInstaller = ModuleInstallerType.Conda;
+        } else if (interpreter.envType === EnvironmentType.Conda && !isAvailableThroughConda) {
+            // This case is temporary and can be removed when https://github.com/microsoft/vscode-jupyter/issues/5034 is unblocked
+            traceInfo(
+                `Interpreter type is conda but package ${moduleName} is not available through conda, using pip instead.`,
+            );
+            requiredInstaller = ModuleInstallerType.Pip;
+        } else {
+            switch (interpreter.envType) {
+                case EnvironmentType.Pipenv:
+                    requiredInstaller = ModuleInstallerType.Pipenv;
+                    break;
+                case EnvironmentType.Poetry:
+                    requiredInstaller = ModuleInstallerType.Poetry;
+                    break;
+                default:
+                    requiredInstaller = ModuleInstallerType.Pip;
+            }
+        }
+        const installerModule: IModuleInstaller | undefined = channels.find((v) => v.type === requiredInstaller);
+
+        const version = `${interpreter.version?.major || ''}.${interpreter.version?.minor || ''}.${
+            interpreter.version?.patch || ''
+        }`;
+
         if (!installerModule) {
             this.appShell.showErrorMessage(Installer.couldNotInstallLibrary().format(moduleName)).then(noop, noop);
+            sendTelemetryEvent(EventName.PYTHON_INSTALL_PACKAGE, undefined, {
+                installer: 'unavailable',
+                requiredInstaller,
+                productName: ProductNames.get(product),
+                version,
+                envType: interpreter.envType,
+            });
             return InstallerResponse.Ignore;
         }
 
         await installerModule
-            .installModule(moduleName, interpreter, cancel)
+            .installModule(product, interpreter, cancel, flags)
             .catch((ex) => traceError(`Error in installing the module '${moduleName}', ${ex}`));
 
-        return this.isInstalled(product, interpreter).then((isInstalled) =>
-            isInstalled ? InstallerResponse.Installed : InstallerResponse.Ignore
-        );
+        return this.isInstalled(product, interpreter).then((isInstalled) => {
+            sendTelemetryEvent(EventName.PYTHON_INSTALL_PACKAGE, undefined, {
+                installer: installerModule?.displayName || '',
+                requiredInstaller,
+                version,
+                envType: interpreter.envType,
+                isInstalled,
+                productName: ProductNames.get(product),
+            });
+            return isInstalled ? InstallerResponse.Installed : InstallerResponse.Ignore;
+        });
     }
+
     /**
      * This method will not get invoked for Jupyter extension.
      * Implemented as a backup.
@@ -555,13 +533,14 @@ export class DataScienceInstaller extends BaseInstaller {
     protected async promptToInstallImplementation(
         product: Product,
         resource?: InterpreterUri,
-        cancel?: CancellationToken
+        cancel?: CancellationToken,
+        _flags?: ModuleInstallFlags,
     ): Promise<InstallerResponse> {
         const productName = ProductNames.get(product)!;
         const item = await this.appShell.showErrorMessage(
             Installer.dataScienceInstallPrompt().format(productName),
             'Yes',
-            'No'
+            'No',
         );
         if (item === 'Yes') {
             return this.install(product, resource, cancel);
@@ -573,22 +552,26 @@ export class DataScienceInstaller extends BaseInstaller {
 @injectable()
 export class ProductInstaller implements IInstaller {
     private readonly productService: IProductService;
+
     private interpreterService: IInterpreterService;
 
     constructor(
         @inject(IServiceContainer) private serviceContainer: IServiceContainer,
-        @inject(IOutputChannel) @named(STANDARD_OUTPUT_CHANNEL) private outputChannel: OutputChannel
+        @inject(IOutputChannel) @named(STANDARD_OUTPUT_CHANNEL) private outputChannel: OutputChannel,
     ) {
         this.productService = serviceContainer.get<IProductService>(IProductService);
         this.interpreterService = this.serviceContainer.get<IInterpreterService>(IInterpreterService);
     }
 
-    // tslint:disable-next-line:no-empty
-    public dispose() {}
+    public dispose(): void {
+        /** Do nothing. */
+    }
+
     public async promptToInstall(
         product: Product,
         resource?: InterpreterUri,
-        cancel?: CancellationToken
+        cancel?: CancellationToken,
+        flags?: ModuleInstallFlags,
     ): Promise<InstallerResponse> {
         const currentInterpreter = isResource(resource)
             ? await this.interpreterService.getActiveInterpreter(resource)
@@ -596,21 +579,35 @@ export class ProductInstaller implements IInstaller {
         if (!currentInterpreter) {
             return InstallerResponse.Ignore;
         }
-        return this.createInstaller(product).promptToInstall(product, resource, cancel);
+        return this.createInstaller(product).promptToInstall(product, resource, cancel, flags);
     }
+
+    public async isProductVersionCompatible(
+        product: Product,
+        semVerRequirement: string,
+        resource?: InterpreterUri,
+    ): Promise<ProductInstallStatus> {
+        return this.createInstaller(product).isProductVersionCompatible(product, semVerRequirement, resource);
+    }
+
     public async install(
         product: Product,
         resource?: InterpreterUri,
-        cancel?: CancellationToken
+        cancel?: CancellationToken,
+        flags?: ModuleInstallFlags,
     ): Promise<InstallerResponse> {
-        return this.createInstaller(product).install(product, resource, cancel);
+        return this.createInstaller(product).install(product, resource, cancel, flags);
     }
-    public async isInstalled(product: Product, resource?: InterpreterUri): Promise<boolean | undefined> {
+
+    public async isInstalled(product: Product, resource?: InterpreterUri): Promise<boolean> {
         return this.createInstaller(product).isInstalled(product, resource);
     }
+
+    // eslint-disable-next-line class-methods-use-this
     public translateProductToModuleName(product: Product, purpose: ModuleNamePurpose): string {
         return translateProductToModule(product, purpose);
     }
+
     private createInstaller(product: Product): BaseInstaller {
         const productType = this.productService.getProductType(product);
         switch (productType) {
@@ -630,59 +627,5 @@ export class ProductInstaller implements IInstaller {
                 break;
         }
         throw new Error(`Unknown product ${product}`);
-    }
-}
-
-// tslint:disable-next-line: cyclomatic-complexity
-function translateProductToModule(product: Product, purpose: ModuleNamePurpose): string {
-    switch (product) {
-        case Product.mypy:
-            return 'mypy';
-        case Product.nosetest: {
-            return purpose === ModuleNamePurpose.install ? 'nose' : 'nosetests';
-        }
-        case Product.pylama:
-            return 'pylama';
-        case Product.prospector:
-            return 'prospector';
-        case Product.pylint:
-            return 'pylint';
-        case Product.pytest:
-            return 'pytest';
-        case Product.autopep8:
-            return 'autopep8';
-        case Product.black:
-            return 'black';
-        case Product.pycodestyle:
-            return 'pycodestyle';
-        case Product.pydocstyle:
-            return 'pydocstyle';
-        case Product.yapf:
-            return 'yapf';
-        case Product.flake8:
-            return 'flake8';
-        case Product.unittest:
-            return 'unittest';
-        case Product.rope:
-            return 'rope';
-        case Product.bandit:
-            return 'bandit';
-        case Product.jupyter:
-            return 'jupyter';
-        case Product.notebook:
-            return 'notebook';
-        case Product.pandas:
-            return 'pandas';
-        case Product.ipykernel:
-            return 'ipykernel';
-        case Product.nbconvert:
-            return 'nbconvert';
-        case Product.kernelspec:
-            return 'kernelspec';
-        case Product.tensorboard:
-            return 'tensorboard';
-        default: {
-            throw new Error(`Product ${product} cannot be installed as a Python Module.`);
-        }
     }
 }

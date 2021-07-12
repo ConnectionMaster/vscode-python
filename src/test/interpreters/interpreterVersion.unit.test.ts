@@ -8,9 +8,6 @@ import '../../client/common/extensions';
 import { IProcessService, IProcessServiceFactory } from '../../client/common/process/types';
 import { IInterpreterVersionService } from '../../client/interpreter/contracts';
 import { InterpreterVersionService } from '../../client/interpreter/interpreterVersion';
-import { EXTENSION_ROOT_DIR_FOR_TESTS } from '../constants';
-
-const isolated = path.join(EXTENSION_ROOT_DIR_FOR_TESTS, 'pythonFiles', 'pyvsc-run-isolated.py');
 
 suite('InterpreterVersionService', () => {
     let processService: typeMoq.IMock<IProcessService>;
@@ -19,7 +16,7 @@ suite('InterpreterVersionService', () => {
     setup(() => {
         const processFactory = typeMoq.Mock.ofType<IProcessServiceFactory>();
         processService = typeMoq.Mock.ofType<IProcessService>();
-        // tslint:disable-next-line:no-any
+
         processService.setup((p: any) => p.then).returns(() => undefined);
 
         processFactory.setup((p) => p.create()).returns(() => Promise.resolve(processService.object));
@@ -34,9 +31,9 @@ suite('InterpreterVersionService', () => {
                 .setup((p) =>
                     p.exec(
                         typeMoq.It.isValue(pythonPath),
-                        typeMoq.It.isValue([isolated, 'pip', '--version']),
-                        typeMoq.It.isAny()
-                    )
+                        typeMoq.It.isValue(['-c', 'import pip; print(pip.__version__)']),
+                        typeMoq.It.isAny(),
+                    ),
                 )
                 .returns(() => Promise.resolve({ stdout: pipVersion }))
                 .verifiable(typeMoq.Times.once());
@@ -51,9 +48,9 @@ suite('InterpreterVersionService', () => {
                 .setup((p) =>
                     p.exec(
                         typeMoq.It.isValue(pythonPath),
-                        typeMoq.It.isValue([isolated, 'pip', '--version']),
-                        typeMoq.It.isAny()
-                    )
+                        typeMoq.It.isValue(['-c', 'import pip; print(pip.__version__)']),
+                        typeMoq.It.isAny(),
+                    ),
                 )
                 .returns(() => Promise.reject('error'))
                 .verifiable(typeMoq.Times.once());

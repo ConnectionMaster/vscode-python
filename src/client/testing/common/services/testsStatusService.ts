@@ -5,9 +5,15 @@
 
 import { inject, injectable } from 'inversify';
 import { Uri } from 'vscode';
-import { TestDataItem } from '../../types';
 import { visitRecursive } from '../testVisitors/visitor';
-import { ITestCollectionStorageService, ITestsStatusUpdaterService, Tests, TestStatus, TestsToRun } from '../types';
+import {
+    ITestCollectionStorageService,
+    ITestsStatusUpdaterService,
+    TestDataItem,
+    Tests,
+    TestStatus,
+    TestsToRun,
+} from '../types';
 
 @injectable()
 export class TestsStatusUpdaterService implements ITestsStatusUpdaterService {
@@ -55,7 +61,7 @@ export class TestsStatusUpdaterService implements ITestsStatusUpdaterService {
         };
         const failedItems = [
             ...tests.testFunctions.map((f) => f.testFunction).filter(predicate),
-            ...tests.testSuites.map((f) => f.testSuite).filter(predicate)
+            ...tests.testSuites.map((f) => f.testSuite).filter(predicate),
         ];
         failedItems.forEach((failedItem) => visitRecursive(tests, failedItem, visitor));
     }
@@ -64,9 +70,10 @@ export class TestsStatusUpdaterService implements ITestsStatusUpdaterService {
             return;
         }
         const itemsRunning = [
+            ...(testsToRun.testFolder || []),
             ...(testsToRun.testFile || []),
             ...(testsToRun.testSuite || []),
-            ...(testsToRun.testFunction || [])
+            ...(testsToRun.testFunction || []),
         ];
         const visitor = (item: TestDataItem) => {
             item.status = TestStatus.Running;

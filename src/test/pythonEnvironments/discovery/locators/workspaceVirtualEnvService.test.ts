@@ -3,7 +3,6 @@
 
 'use strict';
 
-// tslint:disable:no-any max-classes-per-file max-func-body-length no-invalid-this
 import { expect } from 'chai';
 import { exec } from 'child_process';
 import * as path from 'path';
@@ -79,7 +78,6 @@ const baseTimeoutMs = 30_000;
 const timeoutMs = IS_CI_SERVER ? baseTimeoutMs * 4 : baseTimeoutMs;
 suite('Interpreters - Workspace VirtualEnv Service', function () {
     suiteSetup(async function () {
-        // tslint:disable-next-line:no-suspicious-comment
         // TODO: https://github.com/microsoft/vscode-python/issues/13649
         // These tests have been disabled due to flakiness.  It's likely
         // that we will replace them while refactoring the locators
@@ -148,6 +146,8 @@ suite('Interpreters - Workspace VirtualEnv Service', function () {
         // before proceeding with other tests.
         await venvs.cleanUp();
         await locator.getInterpreters(workspaceUri);
+
+        return undefined;
     });
 
     suiteTeardown(async () => venvs.cleanUp());
@@ -184,5 +184,7 @@ suite('Interpreters - Workspace VirtualEnv Service', function () {
         // Workspace4 should still not have any interpreters.
         items4 = await locator.getInterpreters(workspace4);
         expect(items4).to.be.lengthOf(0);
+
+        return undefined;
     });
 });

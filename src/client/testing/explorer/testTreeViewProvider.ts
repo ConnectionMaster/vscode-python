@@ -6,22 +6,23 @@
 import { inject, injectable } from 'inversify';
 import { Event, EventEmitter, TreeItem, TreeItemCollapsibleState, Uri } from 'vscode';
 import { ICommandManager, IWorkspaceService } from '../../common/application/types';
-import { Commands } from '../../common/constants';
+import { Commands, CommandSource } from '../../common/constants';
 import { IDisposable, IDisposableRegistry } from '../../common/types';
 import { sendTelemetryEvent } from '../../telemetry';
 import { EventName } from '../../telemetry/constants';
-import { CommandSource } from '../common/constants';
 import { getChildren, getParent, getTestDataItemType } from '../common/testUtils';
-import { ITestCollectionStorageService, Tests, TestStatus } from '../common/types';
 import {
+    ITestCollectionStorageService,
     ITestDataItemResource,
     ITestManagementService,
     ITestTreeViewProvider,
     TestDataItem,
     TestDataItemType,
+    Tests,
+    TestStatus,
     TestWorkspaceFolder,
-    WorkspaceTestStatus
-} from '../types';
+    WorkspaceTestStatus,
+} from '../common/types';
 import { TestTreeItem } from './testTreeViewItem';
 
 @injectable()
@@ -38,7 +39,7 @@ export class TestTreeViewProvider implements ITestTreeViewProvider, ITestDataIte
         @inject(ITestManagementService) private testService: ITestManagementService,
         @inject(IWorkspaceService) private readonly workspace: IWorkspaceService,
         @inject(ICommandManager) private readonly commandManager: ICommandManager,
-        @inject(IDisposableRegistry) disposableRegistry: IDisposableRegistry
+        @inject(IDisposableRegistry) disposableRegistry: IDisposableRegistry,
     ) {
         this.onDidChangeTreeData = this._onDidChangeTreeData.event;
 
@@ -49,7 +50,7 @@ export class TestTreeViewProvider implements ITestTreeViewProvider, ITestDataIte
         this.workspace.onDidChangeWorkspaceFolders(
             () => this._onDidChangeTreeData.fire(undefined),
             this,
-            this.disposables
+            this.disposables,
         );
 
         if (Array.isArray(workspace.workspaceFolders) && workspace.workspaceFolders.length > 0) {
@@ -107,7 +108,7 @@ export class TestTreeViewProvider implements ITestTreeViewProvider, ITestDataIte
                         Commands.Tests_Discover,
                         element,
                         CommandSource.testExplorer,
-                        undefined
+                        undefined,
                     );
                     tests = this.testStore.getTests(element.workspaceFolder.uri);
                 }
@@ -121,7 +122,7 @@ export class TestTreeViewProvider implements ITestTreeViewProvider, ITestDataIte
         }
 
         sendTelemetryEvent(EventName.UNITTEST_EXPLORER_WORK_SPACE_COUNT, undefined, {
-            count: this.workspace.workspaceFolders.length
+            count: this.workspace.workspaceFolders.length,
         });
 
         // If we are in a single workspace

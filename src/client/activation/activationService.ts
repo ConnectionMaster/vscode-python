@@ -7,12 +7,7 @@ import { ConfigurationChangeEvent, Disposable, OutputChannel, Uri } from 'vscode
 
 import { LSNotSupportedDiagnosticServiceId } from '../application/diagnostics/checks/lsNotSupported';
 import { IDiagnosticsService } from '../application/diagnostics/types';
-import {
-    IApplicationEnvironment,
-    IApplicationShell,
-    ICommandManager,
-    IWorkspaceService
-} from '../common/application/types';
+import { IApplicationShell, ICommandManager, IWorkspaceService } from '../common/application/types';
 import { STANDARD_OUTPUT_CHANNEL } from '../common/constants';
 import { traceError } from '../common/logger';
 import {
@@ -22,7 +17,7 @@ import {
     IOutputChannel,
     IPersistentStateFactory,
     IPythonSettings,
-    Resource
+    Resource,
 } from '../common/types';
 import { swallowExceptions } from '../common/utils/decorators';
 import { LanguageService } from '../common/utils/localize';
@@ -39,8 +34,9 @@ import {
     IExtensionActivationService,
     ILanguageServerActivator,
     ILanguageServerCache,
-    LanguageServerType
+    LanguageServerType,
 } from './types';
+import { StopWatch } from '../common/utils/stopWatch';
 
 const languageServerSetting: keyof IPythonSettings = 'languageServer';
 const workspacePathNameForGlobalWorkspaces = '';
@@ -55,16 +51,22 @@ interface IActivatedServer {
 export class LanguageServerExtensionActivationService
     implements IExtensionActivationService, ILanguageServerCache, Disposable {
     private cache = new Map<string, Promise<RefCountedLanguageServer>>();
+
     private activatedServer?: IActivatedServer;
+
     private readonly workspaceService: IWorkspaceService;
+
     private readonly output: OutputChannel;
+
     private readonly interpreterService: IInterpreterService;
+
     private readonly languageServerChangeHandler: LanguageServerChangeHandler;
+
     private resource!: Resource;
 
     constructor(
         @inject(IServiceContainer) private serviceContainer: IServiceContainer,
-        @inject(IPersistentStateFactory) private stateFactory: IPersistentStateFactory
+        @inject(IPersistentStateFactory) private stateFactory: IPersistentStateFactory,
     ) {
         this.workspaceService = this.serviceContainer.get<IWorkspaceService>(IWorkspaceService);
         this.interpreterService = this.serviceContainer.get<IInterpreterService>(IInterpreterService);
@@ -77,20 +79,22 @@ export class LanguageServerExtensionActivationService
         disposables.push(this.workspaceService.onDidChangeWorkspaceFolders(this.onWorkspaceFoldersChanged, this));
         disposables.push(this.interpreterService.onDidChangeInterpreter(this.onDidChangeInterpreter.bind(this)));
         disposables.push(
-            commandManager.registerCommand(Commands.ClearAnalyisCache, this.onClearAnalysisCaches.bind(this))
+            commandManager.registerCommand(Commands.ClearAnalyisCache, this.onClearAnalysisCaches.bind(this)),
         );
 
         this.languageServerChangeHandler = new LanguageServerChangeHandler(
             this.getCurrentLanguageServerType(),
             this.serviceContainer.get<IExtensions>(IExtensions),
             this.serviceContainer.get<IApplicationShell>(IApplicationShell),
-            this.serviceContainer.get<IApplicationEnvironment>(IApplicationEnvironment),
-            this.serviceContainer.get<ICommandManager>(ICommandManager)
+            this.serviceContainer.get<ICommandManager>(ICommandManager),
+            this.serviceContainer.get<IWorkspaceService>(IWorkspaceService),
+            this.serviceContainer.get<IConfigurationService>(IConfigurationService),
         );
         disposables.push(this.languageServerChangeHandler);
     }
 
     public async activate(resource: Resource): Promise<void> {
+        const stopWatch = new StopWatch();
         // Get a new server and dispose of the old one (might be the same one)
         this.resource = resource;
         const interpreter = await this.interpreterService.getActiveInterpreter(resource);
@@ -117,6 +121,9 @@ export class LanguageServerExtensionActivationService
         // Force this server to reconnect (if disconnected) as it should be the active
         // language server for all of VS code.
         this.activatedServer.server.activate();
+        sendTelemetryEvent(EventName.PYTHON_LANGUAGE_SERVER_STARTUP_DURATION, stopWatch.elapsedTime, {
+            languageServerType: result.type,
+        });
     }
 
     public async get(resource: Resource, interpreter?: PythonEnvironment): Promise<RefCountedLanguageServer> {
@@ -138,7 +145,7 @@ export class LanguageServerExtensionActivationService
         return result;
     }
 
-    public dispose() {
+    public dispose(): void {
         if (this.activatedServer) {
             this.activatedServer.server.dispose();
         }
@@ -148,7 +155,7 @@ export class LanguageServerExtensionActivationService
     public async sendTelemetryForChosenLanguageServer(languageServer: LanguageServerType): Promise<void> {
         const state = this.stateFactory.createGlobalPersistentState<LanguageServerType | undefined>(
             'SWITCH_LS',
-            undefined
+            undefined,
         );
         if (typeof state.value !== 'string') {
             await state.updateValue(languageServer);
@@ -156,11 +163,11 @@ export class LanguageServerExtensionActivationService
         if (state.value !== languageServer) {
             await state.updateValue(languageServer);
             sendTelemetryEvent(EventName.PYTHON_LANGUAGE_SERVER_CURRENT_SELECTION, undefined, {
-                switchTo: languageServer
+                switchTo: languageServer,
             });
         } else {
             sendTelemetryEvent(EventName.PYTHON_LANGUAGE_SERVER_CURRENT_SELECTION, undefined, {
-                lsStartup: languageServer
+                lsStartup: languageServer,
             });
         }
     }
@@ -185,10 +192,10 @@ export class LanguageServerExtensionActivationService
         );
     }
 
-    protected async onWorkspaceFoldersChanged() {
-        //If an activated workspace folder was removed, dispose its activator
+    protected async onWorkspaceFoldersChanged(): Promise<void> {
+        // If an activated workspace folder was removed, dispose its activator
         const workspaceKeys = await Promise.all(
-            this.workspaceService.workspaceFolders!.map((workspaceFolder) => this.getKey(workspaceFolder.uri))
+            this.workspaceService.workspaceFolders!.map((workspaceFolder) => this.getKey(workspaceFolder.uri)),
         );
         const activatedWkspcKeys = Array.from(this.cache.keys());
         const activatedWkspcFoldersRemoved = activatedWkspcKeys.filter((item) => workspaceKeys.indexOf(item) < 0);
@@ -210,24 +217,48 @@ export class LanguageServerExtensionActivationService
         return configurationService.getSettings(this.resource).languageServer;
     }
 
+    private getCurrentLanguageServerTypeIsDefault(): boolean {
+        const configurationService = this.serviceContainer.get<IConfigurationService>(IConfigurationService);
+        return configurationService.getSettings(this.resource).languageServerIsDefault;
+    }
+
     private async createRefCountedServer(
         resource: Resource,
         interpreter: PythonEnvironment | undefined,
-        key: string
+        key: string,
     ): Promise<RefCountedLanguageServer> {
         let serverType = this.getCurrentLanguageServerType();
         if (serverType === LanguageServerType.Microsoft) {
             const lsNotSupportedDiagnosticService = this.serviceContainer.get<IDiagnosticsService>(
                 IDiagnosticsService,
-                LSNotSupportedDiagnosticServiceId
+                LSNotSupportedDiagnosticServiceId,
             );
             const diagnostic = await lsNotSupportedDiagnosticService.diagnose(undefined);
             lsNotSupportedDiagnosticService.handle(diagnostic).ignoreErrors();
             if (diagnostic.length) {
                 sendTelemetryEvent(EventName.PYTHON_LANGUAGE_SERVER_PLATFORM_SUPPORTED, undefined, {
-                    supported: false
+                    supported: false,
                 });
                 serverType = LanguageServerType.Jedi;
+            }
+        }
+
+        if (serverType === LanguageServerType.JediLSP && interpreter && interpreter.version) {
+            if (interpreter.version.major < 3 || (interpreter.version.major === 3 && interpreter.version.minor < 6)) {
+                sendTelemetryEvent(EventName.JEDI_FALLBACK);
+                serverType = LanguageServerType.Jedi;
+            }
+        }
+
+        // If Pylance was chosen via the default and the interpreter is Python 2, fall back to
+        // Jedi. If Pylance was explicitly chosen, continue anyway, even if Pylance won't work
+        // as expected, matching pre-default behavior.
+        if (this.getCurrentLanguageServerTypeIsDefault()) {
+            if (serverType === LanguageServerType.Node && interpreter && interpreter.version) {
+                if (interpreter.version.major < 3) {
+                    sendTelemetryEvent(EventName.JEDI_FALLBACK);
+                    serverType = LanguageServerType.Jedi;
+                }
             }
         }
 
@@ -241,6 +272,7 @@ export class LanguageServerExtensionActivationService
             if (serverType === LanguageServerType.Jedi) {
                 throw ex;
             }
+            traceError(ex);
             this.output.appendLine(LanguageService.lsFailedToStart());
             serverType = LanguageServerType.Jedi;
             server = this.serviceContainer.get<ILanguageServerActivator>(ILanguageServerActivator, serverType);
@@ -263,6 +295,9 @@ export class LanguageServerExtensionActivationService
             case LanguageServerType.Jedi:
                 outputLine = LanguageService.startingJedi();
                 break;
+            case LanguageServerType.JediLSP:
+                outputLine = LanguageService.startingJediLSP();
+                break;
             case LanguageServerType.Microsoft:
                 outputLine = LanguageService.startingMicrosoft();
                 break;
@@ -273,7 +308,7 @@ export class LanguageServerExtensionActivationService
                 outputLine = LanguageService.startingNone();
                 break;
             default:
-                throw new Error('Unknown langauge server type in activator.');
+                throw new Error('Unknown language server type in activator.');
         }
         this.output.appendLine(outputLine);
     }
@@ -297,14 +332,14 @@ export class LanguageServerExtensionActivationService
         const configurationService = this.serviceContainer.get<IConfigurationService>(IConfigurationService);
         const serverType = configurationService.getSettings(this.resource).languageServer;
         if (serverType === LanguageServerType.Node) {
-            return 'shared-ls';
+            return LanguageServerType.Node;
         }
 
         const resourcePortion = this.workspaceService.getWorkspaceFolderIdentifier(
             resource,
-            workspacePathNameForGlobalWorkspaces
+            workspacePathNameForGlobalWorkspaces,
         );
-        interpreter = interpreter ? interpreter : await this.interpreterService.getActiveInterpreter(resource);
+        interpreter = interpreter || (await this.interpreterService.getActiveInterpreter(resource));
         const interperterPortion = interpreter ? `${interpreter.path}-${interpreter.envName}` : '';
         return `${resourcePortion}-${interperterPortion}`;
     }

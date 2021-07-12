@@ -3,7 +3,7 @@ import * as path from 'path';
 import * as TypeMoq from 'typemoq';
 import { IFileSystem } from '../../../../client/common/platform/types';
 import { IPersistentStateFactory } from '../../../../client/common/types';
-import { ICondaService, IInterpreterHelper } from '../../../../client/interpreter/contracts';
+import { ICondaLocatorService, IInterpreterHelper } from '../../../../client/interpreter/contracts';
 import { InterpreterHelper } from '../../../../client/interpreter/helpers';
 import { IServiceContainer } from '../../../../client/ioc/types';
 import {
@@ -18,15 +18,14 @@ import { UnitTestIocContainer } from '../../../testing/serviceRegistry';
 
 const environmentsPath = path.join(__dirname, '..', '..', '..', 'src', 'test', 'pythonFiles', 'environments');
 
-// tslint:disable-next-line:max-func-body-length
 suite('Interpreters from Conda Environments', () => {
     let ioc: UnitTestIocContainer;
     let condaProvider: CondaEnvService;
-    let condaService: TypeMoq.IMock<ICondaService>;
+    let condaService: TypeMoq.IMock<ICondaLocatorService>;
     let interpreterHelper: TypeMoq.IMock<InterpreterHelper>;
     let fileSystem: TypeMoq.IMock<IFileSystem>;
-    setup(() => {
-        initializeDI();
+    setup(async () => {
+        await initializeDI();
         const serviceContainer = TypeMoq.Mock.ofType<IServiceContainer>();
         const stateFactory = TypeMoq.Mock.ofType<IPersistentStateFactory>();
         serviceContainer
@@ -37,7 +36,7 @@ suite('Interpreters from Conda Environments', () => {
             .setup((s) => s.createGlobalPersistentState(TypeMoq.It.isAny(), TypeMoq.It.isAny()))
             .returns(() => state);
 
-        condaService = TypeMoq.Mock.ofType<ICondaService>();
+        condaService = TypeMoq.Mock.ofType<ICondaLocatorService>();
         interpreterHelper = TypeMoq.Mock.ofType<InterpreterHelper>();
         fileSystem = TypeMoq.Mock.ofType<IFileSystem>();
         condaProvider = new CondaEnvService(
@@ -48,20 +47,19 @@ suite('Interpreters from Conda Environments', () => {
         );
     });
     teardown(() => ioc.dispose());
-    function initializeDI() {
+    async function initializeDI() {
         ioc = new UnitTestIocContainer();
         ioc.registerCommonTypes();
         ioc.registerVariableTypes();
         ioc.registerProcessTypes();
     }
-    function _parseCondaInfo(info: CondaInfo, conda: ICondaService, fs: IFileSystem, h: IInterpreterHelper) {
+    function _parseCondaInfo(info: CondaInfo, conda: ICondaLocatorService, fs: IFileSystem, h: IInterpreterHelper) {
         return parseCondaInfo(info, conda.getInterpreterPath, fs.fileExists, h.getInterpreterInformation);
     }
 
     test('Must return an empty list for empty json', async () => {
         const interpreters = await _parseCondaInfo(
-            // tslint:disable-next-line:no-any prefer-type-cast
-            {} as any,
+            {} as CondaInfo,
             condaService.object,
             fileSystem.object,
             interpreterHelper.object,
@@ -81,9 +79,9 @@ suite('Interpreters from Conda Environments', () => {
         };
         condaService
             .setup((c) => c.getInterpreterPath(TypeMoq.It.isAny()))
-            .returns((environmentPath) => (isWindows
-                ? path.join(environmentPath, 'python.exe')
-                : path.join(environmentPath, 'bin', 'python')));
+            .returns((environmentPath) =>
+                isWindows ? path.join(environmentPath, 'python.exe') : path.join(environmentPath, 'bin', 'python'),
+            );
         info.envs.forEach((validPath) => {
             const pythonPath = isWindows ? path.join(validPath, 'python.exe') : path.join(validPath, 'bin', 'python');
             fileSystem
@@ -138,9 +136,9 @@ suite('Interpreters from Conda Environments', () => {
         };
         condaService
             .setup((c) => c.getInterpreterPath(TypeMoq.It.isAny()))
-            .returns((environmentPath) => (isWindows
-                ? path.join(environmentPath, 'python.exe')
-                : path.join(environmentPath, 'bin', 'python')));
+            .returns((environmentPath) =>
+                isWindows ? path.join(environmentPath, 'python.exe') : path.join(environmentPath, 'bin', 'python'),
+            );
         info.envs.forEach((validPath) => {
             const pythonPath = isWindows ? path.join(validPath, 'python.exe') : path.join(validPath, 'bin', 'python');
             fileSystem
@@ -154,11 +152,13 @@ suite('Interpreters from Conda Environments', () => {
         condaService.setup((c) => c.getCondaInfo()).returns(() => Promise.resolve(info));
         condaService
             .setup((c) => c.getCondaEnvironments(TypeMoq.It.isAny()))
-            .returns(() => Promise.resolve([
-                { name: 'base', path: environmentsPath },
-                { name: 'numpy', path: path.join(environmentsPath, 'conda', 'envs', 'numpy') },
-                { name: 'scipy', path: path.join(environmentsPath, 'conda', 'envs', 'scipy') },
-            ]));
+            .returns(() =>
+                Promise.resolve([
+                    { name: 'base', path: environmentsPath },
+                    { name: 'numpy', path: path.join(environmentsPath, 'conda', 'envs', 'numpy') },
+                    { name: 'scipy', path: path.join(environmentsPath, 'conda', 'envs', 'scipy') },
+                ]),
+            );
         fileSystem
             .setup((fs) => fs.arePathsSame(TypeMoq.It.isAny(), TypeMoq.It.isAny()))
             .returns((p1: string, p2: string) => (isWindows ? p1 === p2 : p1.toUpperCase() === p2.toUpperCase()));
@@ -195,13 +195,14 @@ suite('Interpreters from Conda Environments', () => {
         const info = {
             envs: [path.join(environmentsPath, 'conda', 'envs', 'numpy')],
             default_prefix: '',
-            'sys.version': '3.6.1 |Anaonda 4.4.0 (64-bit)| (default, May 11 2017, 13:25:24) [MSC v.1900 64 bit (AMD64)]',
+            'sys.version':
+                '3.6.1 |Anaonda 4.4.0 (64-bit)| (default, May 11 2017, 13:25:24) [MSC v.1900 64 bit (AMD64)]',
         };
         condaService
             .setup((c) => c.getInterpreterPath(TypeMoq.It.isAny()))
-            .returns((environmentPath) => (isWindows
-                ? path.join(environmentPath, 'python.exe')
-                : path.join(environmentPath, 'bin', 'python')));
+            .returns((environmentPath) =>
+                isWindows ? path.join(environmentPath, 'python.exe') : path.join(environmentPath, 'bin', 'python'),
+            );
         info.envs.forEach((validPath) => {
             const pythonPath = isWindows ? path.join(validPath, 'python.exe') : path.join(validPath, 'bin', 'python');
             fileSystem
@@ -240,7 +241,8 @@ suite('Interpreters from Conda Environments', () => {
         const info = {
             envs: [path.join(environmentsPath, 'conda', 'envs', 'numpy')],
             default_prefix: '',
-            'sys.version': '3.6.1 |Anaonda 4.4.0 (64-bit)| (default, May 11 2017, 13:25:24) [MSC v.1900 64 bit (AMD64)]',
+            'sys.version':
+                '3.6.1 |Anaonda 4.4.0 (64-bit)| (default, May 11 2017, 13:25:24) [MSC v.1900 64 bit (AMD64)]',
         };
         interpreterHelper
             .setup((i) => i.getInterpreterInformation(TypeMoq.It.isAny()))
@@ -248,16 +250,18 @@ suite('Interpreters from Conda Environments', () => {
         condaService.setup((c) => c.getCondaInfo()).returns(() => Promise.resolve(info));
         condaService
             .setup((c) => c.getCondaEnvironments(TypeMoq.It.isAny()))
-            .returns(() => Promise.resolve([
-                { name: 'base', path: environmentsPath },
-                { name: 'numpy', path: path.join(environmentsPath, 'conda', 'envs', 'numpy') },
-                { name: 'scipy', path: path.join(environmentsPath, 'conda', 'envs', 'scipy') },
-            ]));
+            .returns(() =>
+                Promise.resolve([
+                    { name: 'base', path: environmentsPath },
+                    { name: 'numpy', path: path.join(environmentsPath, 'conda', 'envs', 'numpy') },
+                    { name: 'scipy', path: path.join(environmentsPath, 'conda', 'envs', 'scipy') },
+                ]),
+            );
         condaService
             .setup((c) => c.getInterpreterPath(TypeMoq.It.isAny()))
-            .returns((environmentPath) => (isWindows
-                ? path.join(environmentPath, 'python.exe')
-                : path.join(environmentPath, 'bin', 'python')));
+            .returns((environmentPath) =>
+                isWindows ? path.join(environmentPath, 'python.exe') : path.join(environmentPath, 'bin', 'python'),
+            );
         info.envs.forEach((validPath) => {
             const pythonPath = isWindows ? path.join(validPath, 'python.exe') : path.join(validPath, 'bin', 'python');
             fileSystem
@@ -296,9 +300,9 @@ suite('Interpreters from Conda Environments', () => {
         };
         condaService
             .setup((c) => c.getInterpreterPath(TypeMoq.It.isAny()))
-            .returns((environmentPath) => (isWindows
-                ? path.join(environmentPath, 'python.exe')
-                : path.join(environmentPath, 'bin', 'python')));
+            .returns((environmentPath) =>
+                isWindows ? path.join(environmentPath, 'python.exe') : path.join(environmentPath, 'bin', 'python'),
+            );
         info.envs.forEach((validPath) => {
             const pythonPath = isWindows ? path.join(validPath, 'python.exe') : path.join(validPath, 'bin', 'python');
             fileSystem
@@ -340,9 +344,9 @@ suite('Interpreters from Conda Environments', () => {
         };
         condaService
             .setup((c) => c.getInterpreterPath(TypeMoq.It.isAny()))
-            .returns((environmentPath) => (isWindows
-                ? path.join(environmentPath, 'python.exe')
-                : path.join(environmentPath, 'bin', 'python')));
+            .returns((environmentPath) =>
+                isWindows ? path.join(environmentPath, 'python.exe') : path.join(environmentPath, 'bin', 'python'),
+            );
         info.envs.forEach((validPath) => {
             const pythonPath = isWindows ? path.join(validPath, 'python.exe') : path.join(validPath, 'bin', 'python');
             fileSystem
@@ -356,11 +360,13 @@ suite('Interpreters from Conda Environments', () => {
         condaService.setup((c) => c.getCondaInfo()).returns(() => Promise.resolve(info));
         condaService
             .setup((c) => c.getCondaEnvironments(TypeMoq.It.isAny()))
-            .returns(() => Promise.resolve([
-                { name: 'base', path: environmentsPath },
-                { name: 'numpy', path: path.join(environmentsPath, 'conda', 'envs', 'numpy') },
-                { name: 'scipy', path: path.join(environmentsPath, 'conda', 'envs', 'scipy') },
-            ]));
+            .returns(() =>
+                Promise.resolve([
+                    { name: 'base', path: environmentsPath },
+                    { name: 'numpy', path: path.join(environmentsPath, 'conda', 'envs', 'numpy') },
+                    { name: 'scipy', path: path.join(environmentsPath, 'conda', 'envs', 'scipy') },
+                ]),
+            );
         fileSystem
             .setup((fs) => fs.arePathsSame(TypeMoq.It.isAny(), TypeMoq.It.isAny()))
             .returns((p1: string, p2: string) => (isWindows ? p1 === p2 : p1.toUpperCase() === p2.toUpperCase()));
@@ -390,9 +396,9 @@ suite('Interpreters from Conda Environments', () => {
         };
         condaService
             .setup((c) => c.getInterpreterPath(TypeMoq.It.isAny()))
-            .returns((environmentPath) => (isWindows
-                ? path.join(environmentPath, 'python.exe')
-                : path.join(environmentPath, 'bin', 'python')));
+            .returns((environmentPath) =>
+                isWindows ? path.join(environmentPath, 'python.exe') : path.join(environmentPath, 'bin', 'python'),
+            );
         const pythonPath = isWindows
             ? path.join(info.default_prefix, 'python.exe')
             : path.join(info.default_prefix, 'bin', 'python');
@@ -443,9 +449,9 @@ suite('Interpreters from Conda Environments', () => {
         validPaths.forEach((envPath) => {
             condaService
                 .setup((c) => c.getInterpreterPath(TypeMoq.It.isValue(envPath)))
-                .returns((environmentPath) => (isWindows
-                    ? path.join(environmentPath, 'python.exe')
-                    : path.join(environmentPath, 'bin', 'python')));
+                .returns((environmentPath) =>
+                    isWindows ? path.join(environmentPath, 'python.exe') : path.join(environmentPath, 'bin', 'python'),
+                );
             const pythonPath = isWindows ? path.join(envPath, 'python.exe') : path.join(envPath, 'bin', 'python');
             fileSystem
                 .setup((fs) => fs.fileExists(TypeMoq.It.isValue(pythonPath)))

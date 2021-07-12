@@ -12,8 +12,7 @@ import '../../common/extensions';
 import { IDisposable, IDisposableRegistry } from '../../common/types';
 import { debounceAsync } from '../../common/utils/decorators';
 import { getTestDataItemType } from '../common/testUtils';
-import { ITestCollectionStorageService, TestStatus } from '../common/types';
-import { TestDataItem, TestDataItemType } from '../types';
+import { TestDataItem, TestDataItemType, ITestCollectionStorageService, TestStatus } from '../common/types';
 
 @injectable()
 export class FailedTestHandler implements IExtensionSingleActivationService, IDisposable {
@@ -22,7 +21,7 @@ export class FailedTestHandler implements IExtensionSingleActivationService, IDi
     constructor(
         @inject(IDisposableRegistry) disposableRegistry: IDisposableRegistry,
         @inject(ICommandManager) private readonly commandManager: ICommandManager,
-        @inject(ITestCollectionStorageService) private readonly storage: ITestCollectionStorageService
+        @inject(ITestCollectionStorageService) private readonly storage: ITestCollectionStorageService,
     ) {
         disposableRegistry.push(this);
     }

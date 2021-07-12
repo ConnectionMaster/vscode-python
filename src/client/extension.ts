@@ -1,9 +1,7 @@
 'use strict';
 
-// tslint:disable:no-var-requires no-require-imports
-
 // This line should always be right on top.
-// tslint:disable:no-any
+
 if ((Reflect as any).metadata === undefined) {
     require('reflect-metadata');
 }
@@ -19,7 +17,7 @@ require('./common/logger');
 // locations at which we record various Intervals are marked below in
 // the same way as this.
 
-const durations: Record<string, number> = {};
+const durations = {} as IStartupDurations;
 import { StopWatch } from './common/utils/stopWatch';
 // Do not move this line of code (used to measure extension load times).
 const stopWatch = new StopWatch();
@@ -36,9 +34,10 @@ import { IAsyncDisposableRegistry, IExtensionContext } from './common/types';
 import { createDeferred } from './common/utils/async';
 import { Common } from './common/utils/localize';
 import { activateComponents } from './extensionActivation';
-import { initializeCommon, initializeComponents, initializeGlobals } from './extensionInit';
+import { initializeStandard, initializeComponents, initializeGlobals } from './extensionInit';
 import { IServiceContainer } from './ioc/types';
 import { sendErrorTelemetry, sendStartupTelemetry } from './startupTelemetry';
+import { IStartupDurations } from './types';
 
 durations.codeLoadingTime = stopWatch.elapsedTime;
 
@@ -86,11 +85,10 @@ export function deactivate(): Thenable<void> {
 /////////////////////////////
 // activation helpers
 
-// tslint:disable-next-line:max-func-body-length
 async function activateUnsafe(
     context: IExtensionContext,
     startupStopWatch: StopWatch,
-    startupDurations: Record<string, number>
+    startupDurations: IStartupDurations,
 ): Promise<[IExtensionApi, Promise<void>, IServiceContainer]> {
     const activationDeferred = createDeferred<void>();
     displayProgress(activationDeferred.promise);
@@ -102,8 +100,10 @@ async function activateUnsafe(
     // First we initialize.
     const ext = initializeGlobals(context);
     activatedServiceContainer = ext.legacyIOC.serviceContainer;
-    initializeCommon(ext);
-    const components = initializeComponents(ext);
+    // Note standard utils especially experiment and platform code are fundamental to the extension
+    // and should be available before we activate anything else.Hence register them first.
+    initializeStandard(ext);
+    const components = await initializeComponents(ext);
 
     // Then we finish activating.
     const componentsActivated = await activateComponents(ext, components);
@@ -115,14 +115,13 @@ async function activateUnsafe(
     //===============================================
     // activation ends here
 
-    startupDurations.endActivateTime = startupStopWatch.elapsedTime;
+    startupDurations.totalActivateTime = startupStopWatch.elapsedTime - startupDurations.startActivateTime;
     activationDeferred.resolve();
 
     const api = buildApi(activationPromise, ext.legacyIOC.serviceManager, ext.legacyIOC.serviceContainer);
     return [api, activationPromise, ext.legacyIOC.serviceContainer];
 }
 
-// tslint:disable-next-line:no-any
 function displayProgress(promise: Promise<any>) {
     const progressOptions: ProgressOptions = { location: ProgressLocation.Window, title: Common.loadingExtension() };
     window.withProgress(progressOptions, () => promise);
@@ -131,9 +130,9 @@ function displayProgress(promise: Promise<any>) {
 /////////////////////////////
 // error handling
 
-async function handleError(ex: Error, startupDurations: Record<string, number>) {
+async function handleError(ex: Error, startupDurations: IStartupDurations) {
     notifyUser(
-        "Extension activation failed, run the 'Developer: Toggle Developer Tools' command for more information."
+        "Extension activation failed, run the 'Developer: Toggle Developer Tools' command for more information.",
     );
     traceError('extension activation failed', ex);
     await sendErrorTelemetry(ex, startupDurations, activatedServiceContainer);
@@ -145,10 +144,8 @@ interface IAppShell {
 
 function notifyUser(msg: string) {
     try {
-        // tslint:disable-next-line:no-any
         let appShell: IAppShell = (window as any) as IAppShell;
         if (activatedServiceContainer) {
-            // tslint:disable-next-line:no-any
             appShell = (activatedServiceContainer.get<IApplicationShell>(IApplicationShell) as any) as IAppShell;
         }
         appShell.showErrorMessage(msg).ignoreErrors();

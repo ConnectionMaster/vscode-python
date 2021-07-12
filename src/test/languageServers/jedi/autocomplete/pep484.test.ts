@@ -19,10 +19,9 @@ suite('Language Server: Autocomplete PEP 484', () => {
     let ioc: UnitTestIocContainer;
     suiteSetup(async function () {
         await initialize();
-        initializeDI();
+        await initializeDI();
         isPython2 = (await ioc.getPythonMajorVersion(rootWorkspaceUri!)) === 2;
         if (isPython2) {
-            // tslint:disable-next-line:no-invalid-this
             this.skip();
             return;
         }
@@ -33,11 +32,13 @@ suite('Language Server: Autocomplete PEP 484', () => {
         await closeActiveWindows();
         await ioc.dispose();
     });
-    function initializeDI() {
+    async function initializeDI() {
         ioc = new UnitTestIocContainer();
         ioc.registerCommonTypes();
         ioc.registerVariableTypes();
         ioc.registerProcessTypes();
+        ioc.registerInterpreterStorageTypes();
+        await ioc.registerMockInterpreterTypes();
     }
 
     test('argument', async () => {
@@ -48,7 +49,7 @@ suite('Language Server: Autocomplete PEP 484', () => {
         const list = await vscode.commands.executeCommand<vscode.CompletionList>(
             'vscode.executeCompletionItemProvider',
             textDocument.uri,
-            position
+            position,
         );
         assert.notEqual(list!.items.filter((item) => item.label === 'capitalize').length, 0, 'capitalize not found');
         assert.notEqual(list!.items.filter((item) => item.label === 'upper').length, 0, 'upper not found');
@@ -63,7 +64,7 @@ suite('Language Server: Autocomplete PEP 484', () => {
         const list = await vscode.commands.executeCommand<vscode.CompletionList>(
             'vscode.executeCompletionItemProvider',
             textDocument.uri,
-            position
+            position,
         );
         assert.notEqual(list!.items.filter((item) => item.label === 'bit_length').length, 0, 'bit_length not found');
         assert.notEqual(list!.items.filter((item) => item.label === 'from_bytes').length, 0, 'from_bytes not found');

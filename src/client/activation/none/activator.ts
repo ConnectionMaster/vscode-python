@@ -1,6 +1,6 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
-import { inject, injectable, named } from 'inversify';
+import { injectable } from 'inversify';
 import {
     CancellationToken,
     CodeLens,
@@ -18,10 +18,9 @@ import {
     SignatureHelpContext,
     SymbolInformation,
     TextDocument,
-    WorkspaceEdit
+    WorkspaceEdit,
 } from 'vscode';
-import { isTestExecution } from '../../common/constants';
-import { BANNER_NAME_PROPOSE_LS, IPythonExtensionBanner, Resource } from '../../common/types';
+import { Resource } from '../../common/types';
 import { PythonEnvironment } from '../../pythonEnvironments/info';
 import { ILanguageServerActivator } from '../types';
 
@@ -34,42 +33,33 @@ import { ILanguageServerActivator } from '../types';
  */
 @injectable()
 export class NoLanguageServerExtensionActivator implements ILanguageServerActivator {
-    constructor(
-        @inject(IPythonExtensionBanner)
-        @named(BANNER_NAME_PROPOSE_LS)
-        private proposePylancePopup: IPythonExtensionBanner
-    ) {}
-    public async start(_resource: Resource, _interpreter?: PythonEnvironment): Promise<void> {
-        if (!isTestExecution()) {
-            this.proposePylancePopup.showBanner().ignoreErrors();
-        }
-    }
-    // tslint:disable-next-line: no-empty
+    public async start(_resource: Resource, _interpreter?: PythonEnvironment): Promise<void> {}
+
     public dispose(): void {}
-    // tslint:disable-next-line: no-empty
+
     public activate(): void {}
-    // tslint:disable-next-line: no-empty
+
     public deactivate(): void {}
 
     public provideRenameEdits(
         _document: TextDocument,
         _position: Position,
         _newName: string,
-        _token: CancellationToken
+        _token: CancellationToken,
     ): ProviderResult<WorkspaceEdit> {
         return null;
     }
     public provideDefinition(
         _document: TextDocument,
         _position: Position,
-        _token: CancellationToken
+        _token: CancellationToken,
     ): ProviderResult<Location | Location[] | LocationLink[]> {
         return null;
     }
     public provideHover(
         _document: TextDocument,
         _position: Position,
-        _token: CancellationToken
+        _token: CancellationToken,
     ): ProviderResult<Hover> {
         return null;
     }
@@ -77,7 +67,7 @@ export class NoLanguageServerExtensionActivator implements ILanguageServerActiva
         _document: TextDocument,
         _position: Position,
         _context: ReferenceContext,
-        _token: CancellationToken
+        _token: CancellationToken,
     ): ProviderResult<Location[]> {
         return null;
     }
@@ -85,7 +75,7 @@ export class NoLanguageServerExtensionActivator implements ILanguageServerActiva
         _document: TextDocument,
         _position: Position,
         _token: CancellationToken,
-        _context: CompletionContext
+        _context: CompletionContext,
     ): ProviderResult<CompletionItem[] | CompletionList> {
         return null;
     }
@@ -94,7 +84,7 @@ export class NoLanguageServerExtensionActivator implements ILanguageServerActiva
     }
     public provideDocumentSymbols(
         _document: TextDocument,
-        _token: CancellationToken
+        _token: CancellationToken,
     ): ProviderResult<SymbolInformation[] | DocumentSymbol[]> {
         return null;
     }
@@ -102,7 +92,7 @@ export class NoLanguageServerExtensionActivator implements ILanguageServerActiva
         _document: TextDocument,
         _position: Position,
         _token: CancellationToken,
-        _context: SignatureHelpContext
+        _context: SignatureHelpContext,
     ): ProviderResult<SignatureHelp> {
         return null;
     }

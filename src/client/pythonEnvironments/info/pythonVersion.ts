@@ -46,7 +46,7 @@ export type PythonVersion = {
 // (e.g. 3.9.2b1, 3.8.10rc3).
 export function parsePythonVersion(raw: string): PythonVersion | undefined {
     if (!raw || raw.trim().length === 0) {
-        return;
+        return undefined;
     }
     const versionParts = (raw || '')
         .split('.')
@@ -72,19 +72,6 @@ export function parsePythonVersion(raw: string): PythonVersion | undefined {
     const numberParts = `${versionParts[0]}.${versionParts[1]}.${versionParts[2]}`;
     const rawVersion = versionParts.length === 4 ? `${numberParts}-${versionParts[3]}` : numberParts;
     return new SemVer(rawVersion);
-}
-
-/**
- * Determine if the given versions are the same.
- *
- * @param version1 - one of the two versions to compare
- * @param version2 - one of the two versions to compare
- */
-export function areSameVersion(version1?: PythonVersion, version2?: PythonVersion): boolean {
-    if (!version1 || !version2) {
-        return false;
-    }
-    return version1.raw === version2.raw;
 }
 
 type ExecResult = {

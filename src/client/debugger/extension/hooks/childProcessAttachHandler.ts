@@ -20,7 +20,7 @@ import { IChildProcessAttachService, IDebugSessionEventHandlers } from './types'
 @injectable()
 export class ChildProcessAttachEventHandler implements IDebugSessionEventHandlers {
     constructor(
-        @inject(IChildProcessAttachService) private readonly childProcessAttachService: IChildProcessAttachService
+        @inject(IChildProcessAttachService) private readonly childProcessAttachService: IChildProcessAttachService,
     ) {}
 
     @swallowExceptions('Handle child process launch')
@@ -34,7 +34,7 @@ export class ChildProcessAttachEventHandler implements IDebugSessionEventHandler
             event.event === DebuggerEvents.PtvsdAttachToSubprocess ||
             event.event === DebuggerEvents.DebugpyAttachToSubprocess
         ) {
-            data = event.body! as AttachRequestArguments & DebugConfiguration;
+            data = event.body as AttachRequestArguments & DebugConfiguration;
         } else {
             return;
         }

@@ -19,12 +19,12 @@ suite('Python interpreter locator service', () => {
     let interpreters: PythonEnvironment[];
     suiteSetup(async function () {
         // https://github.com/microsoft/vscode-python/issues/12634
-        // tslint:disable-next-line: no-invalid-this
+
         return this.skip();
-        // tslint:disable-next-line:no-invalid-this
+
         this.timeout(getOSType() === OSType.Windows ? TEST_TIMEOUT * 7 : TEST_TIMEOUT * 2);
         await initialize();
-        initializeDI();
+        await initializeDI();
         const locator = ioc.serviceContainer.get<IInterpreterLocatorService>(
             IInterpreterLocatorService,
             INTERPRETER_LOCATOR_SERVICE,
@@ -34,7 +34,7 @@ suite('Python interpreter locator service', () => {
 
     setup(async () => {
         await initializeTest();
-        initializeDI();
+        await initializeDI();
     });
 
     teardown(async () => {
@@ -43,7 +43,7 @@ suite('Python interpreter locator service', () => {
     });
     suiteTeardown(closeActiveWindows);
 
-    function initializeDI() {
+    async function initializeDI() {
         ioc = new UnitTestIocContainer();
         ioc.registerCommonTypes();
         ioc.registerUnitTestTypes();

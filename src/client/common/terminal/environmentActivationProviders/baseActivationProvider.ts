@@ -11,13 +11,13 @@ import { IConfigurationService } from '../../types';
 import { ITerminalActivationCommandProvider, TerminalShellType } from '../types';
 
 @injectable()
-export abstract class BaseActivationCommandProvider implements ITerminalActivationCommandProvider {
+abstract class BaseActivationCommandProvider implements ITerminalActivationCommandProvider {
     constructor(@inject(IServiceContainer) protected readonly serviceContainer: IServiceContainer) {}
 
     public abstract isShellSupported(targetShell: TerminalShellType): boolean;
     public getActivationCommands(
         resource: Uri | undefined,
-        targetShell: TerminalShellType
+        targetShell: TerminalShellType,
     ): Promise<string[] | undefined> {
         const pythonPath = this.serviceContainer.get<IConfigurationService>(IConfigurationService).getSettings(resource)
             .pythonPath;
@@ -25,7 +25,7 @@ export abstract class BaseActivationCommandProvider implements ITerminalActivati
     }
     public abstract getActivationCommandsForInterpreter(
         pythonPath: string,
-        targetShell: TerminalShellType
+        targetShell: TerminalShellType,
     ): Promise<string[] | undefined>;
 }
 
@@ -49,7 +49,7 @@ export abstract class VenvBaseActivationCommandProvider extends BaseActivationCo
             path.dirname,
             path.join,
             // Bind "this"!
-            (n: string) => fs.fileExists(n)
+            (n: string) => fs.fileExists(n),
         );
         return findScript(pythonPath);
     }

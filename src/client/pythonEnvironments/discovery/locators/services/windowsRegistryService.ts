@@ -1,32 +1,25 @@
-// tslint:disable:no-require-imports no-var-requires underscore-consistent-invocation
-
 import { inject, injectable } from 'inversify';
 import * as path from 'path';
-import { Uri } from 'vscode';
 import { traceError } from '../../../../common/logger';
-import {
-    IFileSystem, IPlatformService, IRegistry, RegistryHive,
-} from '../../../../common/platform/types';
+import { IFileSystem, IPlatformService, IRegistry, RegistryHive } from '../../../../common/platform/types';
 import { IPathUtils } from '../../../../common/types';
 import { Architecture } from '../../../../common/utils/platform';
 import { IInterpreterHelper } from '../../../../interpreter/contracts';
-import { IWindowsStoreInterpreter } from '../../../../interpreter/locators/types';
 import { IServiceContainer } from '../../../../ioc/types';
 import { EnvironmentType, PythonEnvironment } from '../../../info';
 import { parsePythonVersion } from '../../../info/pythonVersion';
 import { CacheableLocatorService } from './cacheableLocatorService';
 import { AnacondaCompanyName, AnacondaCompanyNames } from './conda';
-import { WindowsStoreInterpreter } from './windowsStoreInterpreter';
+import { isWindowsStoreInterpreter, isRestrictedWindowsStoreInterpreterPath } from './windowsStoreInterpreter';
 
-const flatten = require('lodash/flatten') as typeof import('lodash/flatten');
+const flatten = require('lodash/flatten');
 
-// tslint:disable-next-line:variable-name
 const DefaultPythonExecutable = 'python.exe';
-// tslint:disable-next-line:variable-name
+
 const CompaniesToIgnore = ['PYLAUNCHER'];
-// tslint:disable-next-line:variable-name
+
 const PythonCoreCompanyDisplayName = 'Python Software Foundation';
-// tslint:disable-next-line:variable-name
+
 const PythonCoreComany = 'PYTHONCORE';
 
 type CompanyInterpreter = {
@@ -45,26 +38,26 @@ export class WindowsRegistryService extends CacheableLocatorService {
         @inject(IRegistry) private registry: IRegistry,
         @inject(IPlatformService) private readonly platform: IPlatformService,
         @inject(IServiceContainer) serviceContainer: IServiceContainer,
-        @inject(WindowsStoreInterpreter) private readonly windowsStoreInterpreter: IWindowsStoreInterpreter,
     ) {
         super('WindowsRegistryService', serviceContainer);
         this.pathUtils = serviceContainer.get<IPathUtils>(IPathUtils);
         this.fs = serviceContainer.get<IFileSystem>(IFileSystem);
     }
 
-    // tslint:disable-next-line:no-empty
-    public dispose() {}
+    public dispose(): void {
+        // Do nothing.
+    }
 
-    protected async getInterpretersImplementation(_resource?: Uri): Promise<PythonEnvironment[]> {
+    protected async getInterpretersImplementation(): Promise<PythonEnvironment[]> {
         return this.platform.isWindows
             ? this.getInterpretersFromRegistry().catch((ex) => {
-                traceError('Fetching interpreters from registry failed with error', ex);
-                return [];
-            })
+                  traceError('Fetching interpreters from registry failed with error', ex);
+                  return [];
+              })
             : [];
     }
 
-    private async getInterpretersFromRegistry() {
+    private async getInterpretersFromRegistry(): Promise<PythonEnvironment[]> {
         // https://github.com/python/peps/blob/master/pep-0514.txt#L357
         const hkcuArch = this.platform.is64bit ? undefined : Architecture.x86;
         const promises: Promise<CompanyInterpreter[]>[] = [
@@ -79,30 +72,33 @@ export class WindowsRegistryService extends CacheableLocatorService {
         const companies = await Promise.all<CompanyInterpreter[]>(promises);
         const companyInterpreters = await Promise.all(
             flatten(companies)
-                .filter((item) => item !== undefined && item !== null)
-                .map((company) => this.getInterpretersForCompany(company.companyKey, company.hive, company.arch)),
+                .filter((item: CompanyInterpreter) => item !== undefined && item !== null)
+                .map((company: CompanyInterpreter) =>
+                    this.getInterpretersForCompany(company.companyKey, company.hive, company.arch),
+                ),
         );
 
-        return (
-            flatten(companyInterpreters)
-                .filter((item) => item !== undefined && item !== null)
-                // tslint:disable-next-line:no-non-null-assertion
-                .map((item) => item!)
-                .reduce<PythonEnvironment[]>((prev, current) => {
-                    if (prev.findIndex((item) => item.path.toUpperCase() === current.path.toUpperCase()) === -1) {
-                        prev.push(current);
-                    }
-                    return prev;
-                }, [])
-        );
+        return flatten(companyInterpreters)
+            .filter((item: PythonEnvironment | null | undefined) => item !== undefined && item !== null)
+            .reduce((prev: PythonEnvironment[], current: PythonEnvironment) => {
+                if (prev.findIndex((item) => item.path.toUpperCase() === current.path.toUpperCase()) === -1) {
+                    prev.push(current);
+                }
+                return prev;
+            }, []);
     }
 
     private async getCompanies(hive: RegistryHive, arch?: Architecture): Promise<CompanyInterpreter[]> {
-        return this.registry.getKeys('\\Software\\Python', hive, arch).then((companyKeys) => companyKeys
-            .filter(
-                (companyKey) => CompaniesToIgnore.indexOf(this.pathUtils.basename(companyKey).toUpperCase()) === -1,
-            )
-            .map((companyKey) => ({ companyKey, hive, arch })));
+        return this.registry
+            .getKeys('\\Software\\Python', hive, arch)
+            .then((companyKeys) =>
+                companyKeys
+                    .filter(
+                        (companyKey) =>
+                            CompaniesToIgnore.indexOf(this.pathUtils.basename(companyKey).toUpperCase()) === -1,
+                    )
+                    .map((companyKey) => ({ companyKey, hive, arch })),
+            );
     }
 
     private async getInterpretersForCompany(companyKey: string, hive: RegistryHive, arch?: Architecture) {
@@ -145,10 +141,11 @@ export class WindowsRegistryService extends CacheableLocatorService {
                     this.registry.getValue(tagKey, hive, arch, 'SysVersion'),
                     this.getCompanyDisplayName(companyKey, hive, arch),
                 ]).then(([installedPath, executablePath, version, companyDisplayName]) => {
-                    companyDisplayName = AnacondaCompanyNames.indexOf(companyDisplayName!) === -1
-                        ? companyDisplayName
-                        : AnacondaCompanyName;
-                    // tslint:disable-next-line:prefer-type-cast no-object-literal-type-assertion
+                    companyDisplayName =
+                        AnacondaCompanyNames.indexOf(companyDisplayName!) === -1
+                            ? companyDisplayName
+                            : AnacondaCompanyName;
+
                     return {
                         installPath: installedPath,
                         executablePath,
@@ -159,26 +156,27 @@ export class WindowsRegistryService extends CacheableLocatorService {
             })
             .then(async (interpreterInfo?: InterpreterInformation) => {
                 if (!interpreterInfo) {
-                    return;
+                    return undefined;
                 }
 
-                const executablePath = interpreterInfo.executablePath && interpreterInfo.executablePath.length > 0
-                    ? interpreterInfo.executablePath
-                    : path.join(interpreterInfo.installPath, DefaultPythonExecutable);
+                const executablePath =
+                    interpreterInfo.executablePath && interpreterInfo.executablePath.length > 0
+                        ? interpreterInfo.executablePath
+                        : path.join(interpreterInfo.installPath, DefaultPythonExecutable);
 
-                if (this.windowsStoreInterpreter.isHiddenInterpreter(executablePath)) {
-                    return;
+                if (isRestrictedWindowsStoreInterpreterPath(executablePath)) {
+                    return undefined;
                 }
                 const helper = this.serviceContainer.get<IInterpreterHelper>(IInterpreterHelper);
                 const details = await helper.getInterpreterInformation(executablePath);
                 if (!details) {
-                    return;
+                    return undefined;
                 }
                 const version = interpreterInfo.version
                     ? this.pathUtils.basename(interpreterInfo.version)
                     : this.pathUtils.basename(tagKey);
                 this._hasInterpreters.resolve(true);
-                // tslint:disable-next-line:prefer-type-cast no-object-literal-type-assertion
+
                 return {
                     ...(details as PythonEnvironment),
                     path: executablePath,
@@ -186,17 +184,19 @@ export class WindowsRegistryService extends CacheableLocatorService {
                     // Give preference to what we have retrieved from getInterpreterInformation.
                     version: details.version || parsePythonVersion(version),
                     companyDisplayName: interpreterInfo.companyDisplayName,
-                    envType: (await this.windowsStoreInterpreter.isWindowsStoreInterpreter(executablePath))
+                    envType: (await isWindowsStoreInterpreter(executablePath))
                         ? EnvironmentType.WindowsStore
                         : EnvironmentType.Unknown,
                 } as PythonEnvironment;
             })
-            .then((interpreter) => (interpreter
-                ? this.fs
-                    .fileExists(interpreter.path)
-                    .catch(() => false)
-                    .then((exists) => (exists ? interpreter : null))
-                : null))
+            .then((interpreter) =>
+                interpreter
+                    ? this.fs
+                          .fileExists(interpreter.path)
+                          .catch(() => false)
+                          .then((exists) => (exists ? interpreter : null))
+                    : null,
+            )
             .catch((error) => {
                 traceError(
                     `Failed to retrieve interpreter details for company ${companyKey},tag: ${tagKey}, hive: ${hive}, arch: ${arch}`,

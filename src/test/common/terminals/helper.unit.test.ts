@@ -9,6 +9,7 @@ import { TerminalManager } from '../../../client/common/application/terminalMana
 import { ITerminalManager } from '../../../client/common/application/types';
 import { PythonSettings } from '../../../client/common/configSettings';
 import { ConfigurationService } from '../../../client/common/configuration/service';
+import { DiscoveryVariants } from '../../../client/common/experiments/groups';
 import { PlatformService } from '../../../client/common/platform/platformService';
 import { IPlatformService } from '../../../client/common/platform/types';
 import { Bash } from '../../../client/common/terminal/environmentActivationProviders/bash';
@@ -22,23 +23,23 @@ import { TerminalNameShellDetector } from '../../../client/common/terminal/shell
 import {
     IShellDetector,
     ITerminalActivationCommandProvider,
-    TerminalShellType
+    TerminalShellType,
 } from '../../../client/common/terminal/types';
-import { IConfigurationService } from '../../../client/common/types';
+import { IConfigurationService, IExperimentService } from '../../../client/common/types';
 import { getNamesAndValues } from '../../../client/common/utils/enum';
 import { Architecture, OSType } from '../../../client/common/utils/platform';
-import { ICondaService } from '../../../client/interpreter/contracts';
+import { ICondaLocatorService } from '../../../client/interpreter/contracts';
 import { InterpreterService } from '../../../client/interpreter/interpreterService';
-import { CondaService } from '../../../client/pythonEnvironments/discovery/locators/services/condaService';
+import { IServiceContainer } from '../../../client/ioc/types';
 import { EnvironmentType, PythonEnvironment } from '../../../client/pythonEnvironments/info';
-
-// tslint:disable:max-func-body-length no-any
 
 suite('Terminal Service helpers', () => {
     let helper: TerminalHelper;
     let terminalManager: ITerminalManager;
     let platformService: IPlatformService;
-    let condaService: ICondaService;
+    let condaService: ICondaLocatorService;
+    let experimentService: IExperimentService;
+    let serviceContainer: IServiceContainer;
     let configurationService: IConfigurationService;
     let condaActivationProvider: ITerminalActivationCommandProvider;
     let bashActivationProvider: ITerminalActivationCommandProvider;
@@ -54,14 +55,19 @@ suite('Terminal Service helpers', () => {
         sysVersion: '1.0.0.0',
         sysPrefix: 'Python',
         envType: EnvironmentType.Unknown,
-        architecture: Architecture.x64
+        architecture: Architecture.x64,
     };
 
     function doSetup() {
         mockDetector = mock(TerminalNameShellDetector);
         terminalManager = mock(TerminalManager);
         platformService = mock(PlatformService);
-        condaService = mock(CondaService);
+        experimentService = mock<IExperimentService>();
+        when(experimentService.inExperiment(DiscoveryVariants.discoverWithFileWatching)).thenResolve(false);
+        serviceContainer = mock<IServiceContainer>();
+        condaService = mock<ICondaLocatorService>();
+        when(serviceContainer.get<IExperimentService>(IExperimentService)).thenReturn(instance(experimentService));
+        when(serviceContainer.get<ICondaLocatorService>(ICondaLocatorService)).thenReturn(instance(condaService));
         configurationService = mock(ConfigurationService);
         condaActivationProvider = mock(CondaActivationCommandProvider);
         bashActivationProvider = mock(Bash);
@@ -73,7 +79,7 @@ suite('Terminal Service helpers', () => {
         helper = new TerminalHelper(
             instance(platformService),
             instance(terminalManager),
-            instance(condaService),
+            instance(serviceContainer),
             instance(mock(InterpreterService)),
             instance(configurationService),
             instance(condaActivationProvider),
@@ -81,7 +87,7 @@ suite('Terminal Service helpers', () => {
             instance(cmdActivationProvider),
             instance(pyenvActivationProvider),
             instance(pipenvActivationProvider),
-            [instance(mockDetector)]
+            [instance(mockDetector)],
         );
     }
     teardown(() => shellDetectorIdentifyTerminalShell.restore());
@@ -185,13 +191,13 @@ suite('Terminal Service helpers', () => {
                 function ensureCondaIsSupported(
                     isSupported: boolean,
                     pythonPath: string,
-                    condaActivationCommands: string[]
+                    condaActivationCommands: string[],
                 ) {
                     when(pythonSettings.pythonPath).thenReturn(pythonPath);
                     when(pythonSettings.terminal).thenReturn({ activateEnvironment: true } as any);
                     when(condaService.isCondaEnvironment(pythonPath)).thenResolve(isSupported);
                     when(condaActivationProvider.getActivationCommands(resource, anything())).thenResolve(
-                        condaActivationCommands
+                        condaActivationCommands,
                     );
                 }
                 test('Activation command must return conda activation command if interpreter is conda', async () => {
@@ -217,7 +223,7 @@ suite('Terminal Service helpers', () => {
 
                     const cmd = await helper.getEnvironmentActivationCommands(
                         ('someShell' as any) as TerminalShellType,
-                        resource
+                        resource,
                     );
 
                     expect(cmd).to.equal(undefined, 'Command must be undefined');
@@ -257,7 +263,7 @@ suite('Terminal Service helpers', () => {
                     ensureCondaIsSupported(false, pythonPath, []);
 
                     when(pipenvActivationProvider.getActivationCommands(resource, anything())).thenResolve(
-                        expectCommand
+                        expectCommand,
                     );
                     when(pipenvActivationProvider.isShellSupported(anything())).thenReturn(true);
 
@@ -334,7 +340,7 @@ suite('Terminal Service helpers', () => {
                             const cmd = await helper.getEnvironmentActivationShellCommands(
                                 resource,
                                 item.value,
-                                interpreter
+                                interpreter,
                             );
                             expect(cmd).to.equal(undefined, 'Command must be undefined');
                         }
@@ -356,7 +362,7 @@ suite('Terminal Service helpers', () => {
                             const cmd = await helper.getEnvironmentActivationShellCommands(
                                 resource,
                                 shellToExpect,
-                                interpreter
+                                interpreter,
                             );
 
                             expect(cmd).to.equal(undefined, 'Command must be undefined');

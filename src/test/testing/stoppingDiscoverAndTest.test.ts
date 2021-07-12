@@ -5,9 +5,10 @@ import { expect, use } from 'chai';
 import * as chaiAsPromised from 'chai-as-promised';
 import * as path from 'path';
 import { Uri } from 'vscode';
+import { CommandSource } from '../../client/common/constants';
 import { Product } from '../../client/common/types';
 import { createDeferred } from '../../client/common/utils/async';
-import { CANCELLATION_REASON, CommandSource, UNITTEST_PROVIDER } from '../../client/testing/common/constants';
+import { CANCELLATION_REASON, UNITTEST_PROVIDER } from '../../client/testing/common/constants';
 import { ITestDiscoveryService } from '../../client/testing/common/types';
 import { initialize, initializeTest } from '../initialize';
 import { MockDiscoveryService, MockTestManagerWithRunningTests } from './mocks';
@@ -16,32 +17,31 @@ import { UnitTestIocContainer } from './serviceRegistry';
 use(chaiAsPromised);
 
 const testFilesPath = path.join(__dirname, '..', '..', '..', 'src', 'test', 'pythonFiles', 'testFiles', 'debuggerTest');
-// tslint:disable-next-line:variable-name
+
 const EmptyTests = {
     summary: {
         passed: 0,
         failures: 0,
         errors: 0,
-        skipped: 0
+        skipped: 0,
     },
     testFiles: [],
     testFunctions: [],
     testSuites: [],
     testFolders: [],
-    rootTestFolders: []
+    rootTestFolders: [],
 };
 
-// tslint:disable-next-line:max-func-body-length
 suite('Unit Tests Stopping Discovery and Runner', () => {
     let ioc: UnitTestIocContainer;
     suiteSetup(initialize);
     setup(async () => {
         await initializeTest();
-        initializeDI();
+        await initializeDI();
     });
     teardown(() => ioc.dispose());
 
-    function initializeDI() {
+    async function initializeDI() {
         ioc = new UnitTestIocContainer();
         ioc.registerCommonTypes();
         ioc.registerProcessTypes();
@@ -54,7 +54,7 @@ suite('Unit Tests Stopping Discovery and Runner', () => {
         ioc.registerTestsHelper();
         ioc.registerTestDiagnosticServices();
         ioc.registerInterpreterStorageTypes();
-        ioc.registerMockInterpreterTypes();
+        await ioc.registerMockInterpreterTypes();
     }
 
     test('Running tests should not stop existing discovery', async () => {
@@ -63,12 +63,12 @@ suite('Unit Tests Stopping Discovery and Runner', () => {
             Product.unittest,
             Uri.file(testFilesPath),
             testFilesPath,
-            ioc.serviceContainer
+            ioc.serviceContainer,
         );
         ioc.serviceManager.addSingletonInstance<ITestDiscoveryService>(
             ITestDiscoveryService,
             new MockDiscoveryService(mockTestManager.discoveryDeferred.promise),
-            UNITTEST_PROVIDER
+            UNITTEST_PROVIDER,
         );
 
         const discoveryPromise = mockTestManager.discoverTests(CommandSource.auto);
@@ -100,17 +100,17 @@ suite('Unit Tests Stopping Discovery and Runner', () => {
             Product.unittest,
             Uri.file(testFilesPath),
             testFilesPath,
-            ioc.serviceContainer
+            ioc.serviceContainer,
         );
         ioc.serviceManager.addSingletonInstance<ITestDiscoveryService>(
             ITestDiscoveryService,
             new MockDiscoveryService(mockTestManager.discoveryDeferred.promise),
-            UNITTEST_PROVIDER
+            UNITTEST_PROVIDER,
         );
         mockTestManager.discoveryDeferred.resolve(EmptyTests);
         await mockTestManager.discoverTests(CommandSource.auto);
         const runPromise = mockTestManager.runTest(CommandSource.ui);
-        // tslint:disable-next-line:no-string-based-set-timeout
+
         await new Promise((resolve) => setTimeout(resolve, 1000));
 
         // User manually discovering tests will kill the existing test runner.

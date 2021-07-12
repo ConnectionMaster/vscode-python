@@ -7,7 +7,7 @@ import { PythonEnvKind } from '../../../client/pythonEnvironments/base/info';
 import {
     BasicPythonEnvsChangedEvent,
     PythonEnvsChangedEvent,
-    PythonEnvsWatcher
+    PythonEnvsWatcher,
 } from '../../../client/pythonEnvironments/base/watcher';
 
 const KINDS_TO_TEST = [
@@ -17,7 +17,7 @@ const KINDS_TO_TEST = [
     PythonEnvKind.OtherGlobal,
     PythonEnvKind.Venv,
     PythonEnvKind.Conda,
-    PythonEnvKind.OtherVirtual
+    PythonEnvKind.OtherVirtual,
 ];
 
 suite('Python envs watcher - PythonEnvsWatcher', () => {
@@ -40,8 +40,8 @@ suite('Python envs watcher - PythonEnvsWatcher', () => {
         KINDS_TO_TEST.forEach((kind) => {
             test(`non-empty event ("${kind}")`, () => {
                 const expected: PythonEnvsChangedEvent = {
-                    kind: kind,
-                    searchLocation: location
+                    kind,
+                    searchLocation: location,
                 };
                 const watcher = new PythonEnvsWatcher();
                 let event: PythonEnvsChangedEvent | undefined;
@@ -99,7 +99,7 @@ suite('Python envs watcher - PythonEnvsWatcher', () => {
         KINDS_TO_TEST.forEach((kind) => {
             test(`non-empty event ("${kind}")`, () => {
                 const expected: BasicPythonEnvsChangedEvent = {
-                    kind: kind
+                    kind,
                 };
                 const watcher = new PythonEnvsWatcher<BasicPythonEnvsChangedEvent>();
                 let event: BasicPythonEnvsChangedEvent | undefined;

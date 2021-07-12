@@ -1,19 +1,21 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
+
 'use strict';
 
 import { QuickPickItem } from 'vscode';
 
-export interface IJupyterServerUri {
+interface IJupyterServerUri {
     baseUrl: string;
     token: string;
-    // tslint:disable-next-line: no-any
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     authorizationHeader: any; // JSON object for authorization header.
     expiration?: Date; // Date/time when header expires and should be refreshed.
     displayName: string;
 }
 
-export type JupyterServerUriHandle = string;
+type JupyterServerUriHandle = string;
 
 export interface IJupyterUriProvider {
     readonly id: string; // Should be a unique string (like a guid)
@@ -22,7 +24,7 @@ export interface IJupyterUriProvider {
     getServerUri(handle: JupyterServerUriHandle): Promise<IJupyterServerUri>;
 }
 
-export interface IDataFrameInfo {
+interface IDataFrameInfo {
     columns?: { key: string; type: ColumnType }[];
     indexColumn?: string;
     rowCount?: number;
@@ -35,11 +37,23 @@ export interface IDataViewerDataProvider {
     getRows(start: number, end: number): Promise<IRowsResponse>;
 }
 
-export enum ColumnType {
+enum ColumnType {
     String = 'string',
     Number = 'number',
-    Bool = 'bool'
+    Bool = 'bool',
 }
 
-// tslint:disable-next-line: no-any
-export type IRowsResponse = any[];
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type IRowsResponse = any[];
+
+export enum JupyterNotInstalledOrigin {
+    StartPageOpenBlankNotebook = 'startpage_open_blank_notebook',
+    StartPageOpenSampleNotebook = 'startpage_open_sample_notebook',
+    StartPageOpenInteractiveWindow = 'startpage_open_interactive_window',
+}
+
+export const IJupyterNotInstalledNotificationHelper = Symbol('IJupyterNotInstalledNotificationHelper');
+export interface IJupyterNotInstalledNotificationHelper {
+    shouldShowJupypterExtensionNotInstalledPrompt(): boolean;
+    showJupyterNotInstalledPrompt(entrypoint: JupyterNotInstalledOrigin): Promise<void>;
+}

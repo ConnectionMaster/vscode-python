@@ -7,6 +7,7 @@ import {
     CodeLens,
     Command,
     CompletionItem,
+    CompletionList,
     Declaration as VDeclaration,
     Definition,
     DefinitionLink,
@@ -20,25 +21,24 @@ import {
     SymbolInformation,
     TextEdit,
     Uri,
-    WorkspaceEdit
+    WorkspaceEdit,
 } from 'vscode';
 import {
     ConfigurationParams,
     ConfigurationRequest,
     HandleDiagnosticsSignature,
-    HandlerResult,
     LanguageClient,
     Middleware,
-    ResponseError
+    ResponseError,
 } from 'vscode-languageclient/node';
 import { IJupyterExtensionDependencyManager, IVSCodeNotebook } from '../common/application/types';
 
 import { HiddenFilePrefix, PYTHON_LANGUAGE } from '../common/constants';
-import { CollectLSRequestTiming, CollectNodeLSRequestTiming } from '../common/experiments/groups';
 import { IFileSystem } from '../common/platform/types';
-import { IConfigurationService, IDisposableRegistry, IExperimentsManager, IExtensions } from '../common/types';
+import { IConfigurationService, IDisposableRegistry, IExtensions } from '../common/types';
 import { isThenable } from '../common/utils/async';
 import { StopWatch } from '../common/utils/stopWatch';
+import { IEnvironmentVariablesProvider } from '../common/variables/types';
 import { IServiceContainer } from '../ioc/types';
 import { NotebookMiddlewareAddon } from '../jupyter/languageserver/notebookMiddlewareAddon';
 import { sendTelemetryEvent } from '../telemetry';
@@ -63,41 +63,39 @@ export class LanguageClientMiddleware implements Middleware {
     public eventCount: number = 0;
 
     public workspace = {
-        // tslint:disable:no-any
-        configuration: (
+        configuration: async (
             params: ConfigurationParams,
             token: CancellationToken,
-            next: ConfigurationRequest.HandlerSignature
-        ): HandlerResult<any[], void> => {
+            next: ConfigurationRequest.HandlerSignature,
+        ) => {
             const configService = this.serviceContainer.get<IConfigurationService>(IConfigurationService);
+            const envService = this.serviceContainer.get<IEnvironmentVariablesProvider>(IEnvironmentVariablesProvider);
 
-            // Hand-collapse "Thenable<A> | Thenable<B> | Thenable<A|B>" into just "Thenable<A|B>" to make TS happy.
-            const result: any[] | ResponseError<void> | Thenable<any[] | ResponseError<void>> = next(params, token);
-
-            // For backwards compatibility, set python.pythonPath to the configured
-            // value as though it were in the user's settings.json file.
-            const addPythonPath = (settings: any[] | ResponseError<void>) => {
-                if (settings instanceof ResponseError) {
-                    return settings;
-                }
-
-                params.items.forEach((item, i) => {
-                    if (item.section === 'python') {
-                        const uri = item.scopeUri ? Uri.parse(item.scopeUri) : undefined;
-                        settings[i].pythonPath = configService.getSettings(uri).pythonPath;
-                    }
-                });
-
+            let settings = next(params, token);
+            if (isThenable(settings)) {
+                settings = await settings;
+            }
+            if (settings instanceof ResponseError) {
                 return settings;
-            };
-
-            if (isThenable(result)) {
-                return result.then(addPythonPath);
             }
 
-            return addPythonPath(result);
-        }
-        // tslint:enable:no-any
+            for (const [i, item] of params.items.entries()) {
+                if (item.section === 'python') {
+                    const uri = item.scopeUri ? Uri.parse(item.scopeUri) : undefined;
+                    // For backwards compatibility, set python.pythonPath to the configured
+                    // value as though it were in the user's settings.json file.
+                    settings[i].pythonPath = configService.getSettings(uri).pythonPath;
+
+                    const env = await envService.getEnvironmentVariables(uri);
+                    const envPYTHONPATH = env.PYTHONPATH;
+                    if (envPYTHONPATH) {
+                        settings[i]._envPYTHONPATH = envPYTHONPATH;
+                    }
+                }
+            }
+
+            return settings;
+        },
     };
     private notebookAddon: NotebookMiddlewareAddon | undefined;
 
@@ -107,7 +105,7 @@ export class LanguageClientMiddleware implements Middleware {
         readonly serviceContainer: IServiceContainer,
         serverType: LanguageServerType,
         getClient: () => LanguageClient | undefined,
-        public readonly serverVersion?: string
+        public readonly serverVersion?: string,
     ) {
         this.handleDiagnostics = this.handleDiagnostics.bind(this); // VS Code calls function without context.
         this.didOpen = this.didOpen.bind(this);
@@ -117,31 +115,24 @@ export class LanguageClientMiddleware implements Middleware {
         this.willSave = this.willSave.bind(this);
         this.willSaveWaitUntil = this.willSaveWaitUntil.bind(this);
 
-        let group: { experiment: string; control: string } | undefined;
-
         if (serverType === LanguageServerType.Microsoft) {
             this.eventName = EventName.PYTHON_LANGUAGE_SERVER_REQUEST;
-            group = CollectLSRequestTiming;
         } else if (serverType === LanguageServerType.Node) {
             this.eventName = EventName.LANGUAGE_SERVER_REQUEST;
-            group = CollectNodeLSRequestTiming;
+        } else if (serverType === LanguageServerType.JediLSP) {
+            this.eventName = EventName.JEDI_LANGUAGE_SERVER_REQUEST;
         } else {
             return;
         }
 
-        const experimentsManager = this.serviceContainer.get<IExperimentsManager>(IExperimentsManager);
         const jupyterDependencyManager = this.serviceContainer.get<IJupyterExtensionDependencyManager>(
-            IJupyterExtensionDependencyManager
+            IJupyterExtensionDependencyManager,
         );
         const notebookApi = this.serviceContainer.get<IVSCodeNotebook>(IVSCodeNotebook);
         const disposables = this.serviceContainer.get<IDisposableRegistry>(IDisposableRegistry) || [];
         const extensions = this.serviceContainer.get<IExtensions>(IExtensions);
         const fileSystem = this.serviceContainer.get<IFileSystem>(IFileSystem);
 
-        if (experimentsManager && !experimentsManager.inExperiment(group.experiment)) {
-            this.eventName = undefined;
-            experimentsManager.sendTelemetryIfInExperiment(group.control);
-        }
         // Enable notebook support if jupyter support is installed
         if (jupyterDependencyManager && jupyterDependencyManager.isJupyterExtensionInstalled) {
             this.notebookAddon = new NotebookMiddlewareAddon(
@@ -149,7 +140,7 @@ export class LanguageClientMiddleware implements Middleware {
                 getClient,
                 fileSystem,
                 PYTHON_LANGUAGE,
-                /.*\.ipynb/m
+                /.*\.(ipynb|interactive)/m,
             );
         }
         disposables.push(
@@ -163,11 +154,11 @@ export class LanguageClientMiddleware implements Middleware {
                             getClient,
                             fileSystem,
                             PYTHON_LANGUAGE,
-                            /.*\.ipynb/m
+                            /.*\.(ipynb|interactive)/m,
                         );
                     }
                 }
-            })
+            }),
         );
     }
 
@@ -213,11 +204,23 @@ export class LanguageClientMiddleware implements Middleware {
         }
     }
 
-    @captureTelemetryForLSPMethod('textDocument/completion', debounceFrequentCall)
+    @captureTelemetryForLSPMethod(
+        'textDocument/completion',
+        debounceFrequentCall,
+        LanguageClientMiddleware.completionLengthMeasure,
+    )
     public provideCompletionItem() {
         if (this.connected) {
             return this.callNext('provideCompletionItem', arguments);
         }
+    }
+
+    private static completionLengthMeasure(
+        _obj: LanguageClientMiddleware,
+        result: CompletionItem[] | CompletionList,
+    ): Record<string, number> {
+        const resultLength = Array.isArray(result) ? result.length : result.items.length;
+        return { resultLength };
     }
 
     @captureTelemetryForLSPMethod('textDocument/hover', debounceFrequentCall)
@@ -369,7 +372,7 @@ export class LanguageClientMiddleware implements Middleware {
         // middleware, it calls into the notebook middleware first.
         if (this.notebookAddon) {
             // It would be nice to use args.callee, but not supported in strict mode
-            // tslint:disable-next-line: no-any
+
             return (this.notebookAddon as any)[funcName](...args);
         } else {
             return args[args.length - 1](...args);
@@ -377,12 +380,14 @@ export class LanguageClientMiddleware implements Middleware {
     }
 }
 
-function captureTelemetryForLSPMethod(method: string, debounceMilliseconds: number) {
-    // tslint:disable-next-line:no-function-expression no-any
+function captureTelemetryForLSPMethod(
+    method: string,
+    debounceMilliseconds: number,
+    lazyMeasures?: (this_: any, result: any) => Record<string, number>,
+) {
     return function (_target: Object, _propertyKey: string, descriptor: TypedPropertyDescriptor<any>) {
         const originalMethod = descriptor.value;
 
-        // tslint:disable-next-line:no-any
         descriptor.value = function (this: LanguageClientMiddleware, ...args: any[]) {
             const eventName = this.eventName;
             if (!eventName) {
@@ -413,21 +418,29 @@ function captureTelemetryForLSPMethod(method: string, debounceMilliseconds: numb
 
             const properties = {
                 lsVersion: this.serverVersion || 'unknown',
-                method: formattedMethod
+                method: formattedMethod,
             };
 
             const stopWatch = new StopWatch();
-            // tslint:disable-next-line:no-unsafe-any
-            const result = originalMethod.apply(this, args);
+            const sendTelemetry = (result: any) => {
+                let measures: number | Record<string, number> = stopWatch.elapsedTime;
+                if (lazyMeasures) {
+                    measures = {
+                        duration: measures,
+                        ...lazyMeasures(this, result),
+                    };
+                }
+                sendTelemetryEvent(eventName, measures, properties);
+                return result;
+            };
 
-            // tslint:disable-next-line:no-unsafe-any
-            if (result && isThenable<void>(result)) {
-                result.then(() => {
-                    sendTelemetryEvent(eventName, stopWatch.elapsedTime, properties);
-                });
-            } else {
-                sendTelemetryEvent(eventName, stopWatch.elapsedTime, properties);
+            let result = originalMethod.apply(this, args);
+
+            if (isThenable<any>(result)) {
+                return result.then(sendTelemetry);
             }
+
+            sendTelemetry(result);
 
             return result;
         };

@@ -3,12 +3,11 @@
 
 'use strict';
 
-// tslint:disable:max-func-body-length no-invalid-this no-any
-
 import * as assert from 'assert';
 import { expect } from 'chai';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { PYTHON_LANGUAGE } from '../../client/common/constants';
 import { updateSetting } from '../common';
 import { EXTENSION_ROOT_DIR_FOR_TESTS } from '../constants';
 import { sleep } from '../core';
@@ -20,7 +19,7 @@ const fileDefinitions = path.join(
     'src',
     'testMultiRootWkspc',
     'smokeTests',
-    'definitions.py'
+    'definitions.py',
 );
 
 const notebookDefinitions = path.join(
@@ -28,7 +27,7 @@ const notebookDefinitions = path.join(
     'src',
     'testMultiRootWkspc',
     'smokeTests',
-    'definitions.ipynb'
+    'definitions.ipynb',
 );
 
 suite('Insiders Test: Language Server', () => {
@@ -39,7 +38,7 @@ suite('Insiders Test: Language Server', () => {
                 'linting.ignorePatterns',
                 ['**/dir1/**'],
                 vscode.workspace.workspaceFolders![0].uri,
-                vscode.ConfigurationTarget.WorkspaceFolder
+                vscode.ConfigurationTarget.WorkspaceFolder,
             );
             await initialize();
         } else {
@@ -56,7 +55,7 @@ suite('Insiders Test: Language Server', () => {
             'linting.ignorePatterns',
             undefined,
             vscode.workspace.workspaceFolders![0].uri,
-            vscode.ConfigurationTarget.WorkspaceFolder
+            vscode.ConfigurationTarget.WorkspaceFolder,
         );
     });
     teardown(closeActiveWindows);
@@ -69,7 +68,7 @@ suite('Insiders Test: Language Server', () => {
             const locations = await vscode.commands.executeCommand<vscode.Location[]>(
                 'vscode.executeDefinitionProvider',
                 textDocument.uri,
-                startPosition
+                startPosition,
             );
             if (locations && locations.length > 0) {
                 expect(locations![0].uri.fsPath).to.contain(path.basename(fileDefinitions));
@@ -81,7 +80,7 @@ suite('Insiders Test: Language Server', () => {
             }
         }
         if (!tested) {
-            assert.fail('Failled to test definitions');
+            assert.fail('Failed to test definitions');
         }
     });
     test('Notebooks', async () => {
@@ -91,12 +90,56 @@ suite('Insiders Test: Language Server', () => {
         for (let i = 0; i < 5; i += 1) {
             const locations = await vscode.commands.executeCommand<vscode.Location[]>(
                 'vscode.executeDefinitionProvider',
-                notebookDocument.cells[2].uri, // Second cell should have a function with the decorator on it
-                startPosition
+                notebookDocument.cellAt(2).document.uri, // Second cell should have a function with the decorator on it
+                startPosition,
             );
             if (locations && locations.length > 0) {
                 expect(locations![0].uri.fsPath).to.contain(path.basename(notebookDefinitions));
+
+                // Insert a new cell
+                const activeEditor = vscode.window.activeNotebookEditor;
+                expect(activeEditor).not.to.be.equal(undefined, 'Active editor not found in notebook');
+                await activeEditor!.edit((edit) => {
+                    edit.replaceCells(0, 0, [
+                        new vscode.NotebookCellData(vscode.NotebookCellKind.Code, PYTHON_LANGUAGE, 'x = 4'),
+                    ]);
+                });
+
+                // Wait a bit to get diagnostics
+                await sleep(1_000);
+
+                // Make sure no error diagnostics
+                let diagnostics = vscode.languages.getDiagnostics(activeEditor!.document.uri);
+                expect(diagnostics).to.have.lengthOf(0, 'Diagnostics found when shouldnt be');
+
+                // Move the cell
+                await activeEditor!.edit((edit) => {
+                    edit.replaceCells(0, 1, []);
+                    edit.replaceCells(1, 0, [
+                        new vscode.NotebookCellData(vscode.NotebookCellKind.Code, PYTHON_LANGUAGE, 'x = 4'),
+                    ]);
+                });
+
+                // Wait a bit to get diagnostics
+                await sleep(1_000);
+
+                // Make sure no error diagnostics
+                diagnostics = vscode.languages.getDiagnostics(activeEditor!.document.uri);
+                expect(diagnostics).to.have.lengthOf(0, 'Diagnostics found when shouldnt be after move');
+
+                // Delete the cell
+                await activeEditor!.edit((edit) => {
+                    edit.replaceCells(1, 1, []);
+                });
+
+                // Wait a bit to get diagnostics
+                await sleep(1_000);
+
+                // Make sure no error diagnostics
+                diagnostics = vscode.languages.getDiagnostics(activeEditor!.document.uri);
+                expect(diagnostics).to.have.lengthOf(0, 'Diagnostics found when shouldnt be after delete');
                 tested = true;
+
                 break;
             } else {
                 // Wait for LS to start.
@@ -104,7 +147,7 @@ suite('Insiders Test: Language Server', () => {
             }
         }
         if (!tested) {
-            assert.fail('Failled to test definitions');
+            assert.fail('Failled to test notebooks');
         }
     });
 });

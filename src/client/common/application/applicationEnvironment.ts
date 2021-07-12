@@ -7,17 +7,18 @@ import { inject, injectable } from 'inversify';
 import * as path from 'path';
 import { parse } from 'semver';
 import * as vscode from 'vscode';
+import { Channel } from '../constants';
 import { IPlatformService } from '../platform/types';
 import { ICurrentProcess, IPathUtils } from '../types';
 import { OSType } from '../utils/platform';
-import { Channel, IApplicationEnvironment } from './types';
+import { IApplicationEnvironment } from './types';
 
 @injectable()
 export class ApplicationEnvironment implements IApplicationEnvironment {
     constructor(
         @inject(IPlatformService) private readonly platform: IPlatformService,
         @inject(IPathUtils) private readonly pathUtils: IPathUtils,
-        @inject(ICurrentProcess) private readonly process: ICurrentProcess
+        @inject(ICurrentProcess) private readonly process: ICurrentProcess,
     ) {}
 
     public get userSettingsFile(): string | undefined {
@@ -30,7 +31,7 @@ export class ApplicationEnvironment implements IApplicationEnvironment {
                     'Application Support',
                     vscodeFolderName,
                     'User',
-                    'settings.json'
+                    'settings.json',
                 );
             case OSType.Linux:
                 return path.join(this.pathUtils.home, '.config', vscodeFolderName, 'User', 'settings.json');
@@ -51,6 +52,9 @@ export class ApplicationEnvironment implements IApplicationEnvironment {
     public get appRoot(): string {
         return vscode.env.appRoot;
     }
+    public get uiKind(): vscode.UIKind {
+        return vscode.env.uiKind;
+    }
     public get language(): string {
         return vscode.env.language;
     }
@@ -61,7 +65,6 @@ export class ApplicationEnvironment implements IApplicationEnvironment {
         return vscode.env.machineId;
     }
     public get extensionName(): string {
-        // tslint:disable-next-line:non-literal-require
         return this.packageJson.displayName;
     }
     /**
@@ -76,9 +79,8 @@ export class ApplicationEnvironment implements IApplicationEnvironment {
     public get shell(): string {
         return vscode.env.shell;
     }
-    // tslint:disable-next-line:no-any
+
     public get packageJson(): any {
-        // tslint:disable-next-line:non-literal-require no-require-imports
         return require('../../../../package.json');
     }
     public get channel(): Channel {

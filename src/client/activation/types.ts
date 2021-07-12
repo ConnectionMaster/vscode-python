@@ -13,12 +13,12 @@ import {
     HoverProvider,
     ReferenceProvider,
     RenameProvider,
-    SignatureHelpProvider
+    SignatureHelpProvider,
 } from 'vscode';
 import { LanguageClient, LanguageClientOptions } from 'vscode-languageclient/node';
 import * as lsp from 'vscode-languageserver-protocol';
-import { NugetPackage } from '../common/nuget/types';
-import { IDisposable, IOutputChannel, LanguageServerDownloadChannels, Resource } from '../common/types';
+import type { NugetPackage } from '../common/nuget/types';
+import type { IDisposable, IOutputChannel, LanguageServerDownloadChannels, Resource } from '../common/types';
 import { PythonEnvironment } from '../pythonEnvironments/info';
 
 export const IExtensionActivationManager = Symbol('IExtensionActivationManager');
@@ -64,16 +64,15 @@ export interface IExtensionActivationService {
 
 export enum LanguageServerType {
     Jedi = 'Jedi',
+    JediLSP = 'JediLSP',
     Microsoft = 'Microsoft',
     Node = 'Pylance',
-    None = 'None'
+    None = 'None',
 }
 
 export const DotNetLanguageServerFolder = 'languageServer';
-export const NodeLanguageServerFolder = 'nodeLanguageServer';
 
-// tslint:disable-next-line: interface-name
-export interface LanguageServerCommandHandler {
+interface LanguageServerCommandHandler {
     clearAnalysisCache(): void;
 }
 
@@ -86,7 +85,7 @@ export type ILanguageServerConnection = Pick<
     'sendRequest' | 'sendNotification' | 'onProgress' | 'sendProgress' | 'onNotification' | 'onRequest'
 >;
 
-export interface ILanguageServer
+interface ILanguageServer
     extends RenameProvider,
         DefinitionProvider,
         HoverProvider,
@@ -136,7 +135,6 @@ export interface ILanguageServerPackageService {
     getLanguageServerDownloadChannel(): LanguageServerDownloadChannels;
 }
 
-export const MajorLanguageServerVersion = Symbol('MajorLanguageServerVersion');
 export const IDownloadChannelRule = Symbol('IDownloadChannelRule');
 export interface IDownloadChannelRule {
     shouldLookForNewLanguageServer(currentFolder?: FolderVersionPair): Promise<boolean>;
@@ -145,18 +143,14 @@ export const ILanguageServerCompatibilityService = Symbol('ILanguageServerCompat
 export interface ILanguageServerCompatibilityService {
     isSupported(): Promise<boolean>;
 }
-export enum LanguageClientFactory {
-    base = 'base',
-    simple = 'simple',
-    downloaded = 'downloaded'
-}
+
 export const ILanguageClientFactory = Symbol('ILanguageClientFactory');
 export interface ILanguageClientFactory {
     createLanguageClient(
         resource: Resource,
         interpreter: PythonEnvironment | undefined,
         clientOptions: LanguageClientOptions,
-        env?: NodeJS.ProcessEnv
+        env?: NodeJS.ProcessEnv,
     ): Promise<LanguageClient>;
 }
 export const ILanguageServerAnalysisOptions = Symbol('ILanguageServerAnalysisOptions');
@@ -175,7 +169,7 @@ export interface ILanguageServerManager extends IDisposable {
 export const ILanguageServerExtension = Symbol('ILanguageServerExtension');
 export interface ILanguageServerExtension extends IDisposable {
     readonly invoked: Event<void>;
-    loadExtensionArgs?: {};
+    loadExtensionArgs?: unknown;
     register(): void;
 }
 export const ILanguageServerProxy = Symbol('ILanguageServerProxy');
@@ -187,7 +181,7 @@ export interface ILanguageServerProxy extends IDisposable {
     start(
         resource: Resource,
         interpreter: PythonEnvironment | undefined,
-        options: LanguageClientOptions
+        options: LanguageClientOptions,
     ): Promise<void>;
     /**
      * Sends a request to LS so as to load other extensions.
@@ -196,14 +190,14 @@ export interface ILanguageServerProxy extends IDisposable {
      * @param {{}} [args]
      * @memberof ILanguageServerProxy
      */
-    loadExtension(args?: {}): void;
+    loadExtension(args?: unknown): void;
 }
 
 export enum PlatformName {
     Windows32Bit = 'win-x86',
     Windows64Bit = 'win-x64',
     Mac64Bit = 'osx-x64',
-    Linux64Bit = 'linux-x64'
+    Linux64Bit = 'linux-x64',
 }
 export const IPlatformData = Symbol('IPlatformData');
 export interface IPlatformData {

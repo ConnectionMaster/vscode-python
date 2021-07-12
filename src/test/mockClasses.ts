@@ -4,7 +4,7 @@ import {
     ILintingSettings,
     IMypyCategorySeverity,
     IPycodestyleCategorySeverity,
-    IPylintCategorySeverity
+    IPylintCategorySeverity,
 } from '../client/common/types';
 
 export class MockOutputChannel implements vscode.OutputChannel {
@@ -22,38 +22,41 @@ export class MockOutputChannel implements vscode.OutputChannel {
         this.append(value);
         this.append('\n');
     }
-    // tslint:disable-next-line:no-empty
+
     public clear() {}
     public show(preservceFocus?: boolean): void;
     public show(column?: vscode.ViewColumn, preserveFocus?: boolean): void;
-    // tslint:disable-next-line:no-any
+
     public show(_x?: any, _y?: any): void {
         this.isShown = true;
     }
     public hide() {
         this.isShown = false;
     }
-    // tslint:disable-next-line:no-empty
+
     public dispose() {}
 }
 
 export class MockStatusBarItem implements vscode.StatusBarItem {
+    backgroundColor: vscode.ThemeColor | undefined;
+    accessibilityInformation?: vscode.AccessibilityInformation | undefined;
     public alignment!: vscode.StatusBarAlignment;
     public priority!: number;
     public text!: string;
     public tooltip!: string;
     public color!: string;
     public command!: string;
-    // tslint:disable-next-line:no-empty
+
     public show(): void {}
-    // tslint:disable-next-line:no-empty
+
     public hide(): void {}
-    // tslint:disable-next-line:no-empty
+
     public dispose(): void {}
 }
 
 export class MockLintingSettings implements ILintingSettings {
     public enabled!: boolean;
+    public cwd?: string;
     public ignorePatterns!: string[];
     public prospectorEnabled!: boolean;
     public prospectorArgs!: string[];

@@ -42,7 +42,7 @@ namespace vscErrors {
         FILE_EXISTS,
         IS_DIR,
         NOT_DIR,
-        NO_PERM
+        NO_PERM,
     ];
     function errorMatches(err: Error, expectedName: string): boolean | undefined {
         if (!known.includes(err.name)) {
@@ -139,9 +139,4 @@ export function isNoPermissionsError(err: Error): boolean | undefined {
         return matched;
     }
     return isSystemError(err, 'EACCES');
-}
-
-// Return true if the given error is ENOTEMPTY.
-export function isDirNotEmptyError(err: Error): boolean | undefined {
-    return isSystemError(err, 'ENOTEMPTY');
 }

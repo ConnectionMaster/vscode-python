@@ -7,11 +7,9 @@ import * as path from 'path';
 import { anything, instance, mock, when } from 'ts-mockito';
 import { ConfigurationTarget, Disposable, Uri, workspace } from 'vscode';
 import { WorkspaceService } from '../../../client/common/application/workspace';
-import { ConfigurationService } from '../../../client/common/configuration/service';
 import { PlatformService } from '../../../client/common/platform/platformService';
 import { IFileSystem } from '../../../client/common/platform/types';
 import { IDisposableRegistry, IPathUtils } from '../../../client/common/types';
-import { clearCache } from '../../../client/common/utils/cacheUtils';
 import { getSearchPathEnvVarNames } from '../../../client/common/utils/exec';
 import { EnvironmentVariablesService } from '../../../client/common/variables/environment';
 import { EnvironmentVariablesProvider } from '../../../client/common/variables/environmentVariablesProvider';
@@ -31,37 +29,30 @@ const multirootPath = path.join(__dirname, '..', '..', '..', '..', 'src', 'testM
 const workspace4Path = Uri.file(path.join(multirootPath, 'workspace4'));
 const workspace4PyFile = Uri.file(path.join(workspace4Path.fsPath, 'one.py'));
 
-// tslint:disable-next-line:max-func-body-length
 suite('Multiroot Environment Variables Provider', () => {
     let ioc: UnitTestIocContainer;
     const pathVariableName = getSearchPathEnvVarNames()[0];
     suiteSetup(async function () {
         if (!IS_MULTI_ROOT_TEST) {
-            // tslint:disable-next-line:no-invalid-this
-            return this.skip();
+            this.skip();
         }
         await clearPythonPathInWorkspaceFolder(workspace4Path);
         await updateSetting('envFile', undefined, workspace4PyFile, ConfigurationTarget.WorkspaceFolder);
         await initialize();
     });
-    setup(() => {
+    setup(async () => {
         ioc = new UnitTestIocContainer();
         ioc.registerCommonTypes();
         ioc.registerVariableTypes();
         ioc.registerProcessTypes();
         ioc.registerInterpreterStorageTypes();
-        ioc.registerMockInterpreterTypes();
+        await ioc.registerMockInterpreterTypes();
         const mockEnvironmentActivationService = mock(EnvironmentActivationService);
         when(mockEnvironmentActivationService.getActivatedEnvironmentVariables(anything())).thenResolve();
-        when(mockEnvironmentActivationService.getActivatedEnvironmentVariables(anything(), anything())).thenResolve();
-        when(
-            mockEnvironmentActivationService.getActivatedEnvironmentVariables(anything(), anything(), anything())
-        ).thenResolve();
         ioc.serviceManager.rebindInstance<IEnvironmentActivationService>(
             IEnvironmentActivationService,
-            instance(mockEnvironmentActivationService)
+            instance(mockEnvironmentActivationService),
         );
-        clearCache();
         return initializeTest();
     });
     suiteTeardown(closeActiveWindows);
@@ -71,7 +62,6 @@ suite('Multiroot Environment Variables Provider', () => {
         await clearPythonPathInWorkspaceFolder(workspace4Path);
         await updateSetting('envFile', undefined, workspace4PyFile, ConfigurationTarget.WorkspaceFolder);
         await initializeTest();
-        clearCache();
     });
 
     function getVariablesProvider(mockVariables: EnvironmentVariables = { ...process.env }) {
@@ -81,16 +71,13 @@ suite('Multiroot Environment Variables Provider', () => {
         const variablesService = new EnvironmentVariablesService(pathUtils, fs);
         const disposables = ioc.serviceContainer.get<Disposable[]>(IDisposableRegistry);
         ioc.serviceManager.addSingletonInstance(IInterpreterAutoSelectionService, new MockAutoSelectionService());
-        const cfgService = new ConfigurationService(ioc.serviceContainer);
         const workspaceService = new WorkspaceService();
         return new EnvironmentVariablesProvider(
             variablesService,
             disposables,
             new PlatformService(),
             workspaceService,
-            cfgService,
             mockProcess,
-            ioc.serviceContainer
         );
     }
 
@@ -102,7 +89,6 @@ suite('Multiroot Environment Variables Provider', () => {
     });
 
     test('Custom variables should be parsed from env file', async () => {
-        // tslint:disable-next-line:no-invalid-template-strings
         await updateSetting('envFile', '${workspaceRoot}/.env', workspace4PyFile, ConfigurationTarget.WorkspaceFolder);
         const processVariables = { ...process.env };
         if (processVariables.PYTHONPATH) {
@@ -117,7 +103,6 @@ suite('Multiroot Environment Variables Provider', () => {
     });
 
     test('All process environment variables should be included in variables returned', async () => {
-        // tslint:disable-next-line:no-invalid-template-strings
         await updateSetting('envFile', '${workspaceRoot}/.env', workspace4PyFile, ConfigurationTarget.WorkspaceFolder);
         const processVariables = { ...process.env };
         if (processVariables.PYTHONPATH) {
@@ -135,13 +120,12 @@ suite('Multiroot Environment Variables Provider', () => {
             // On CI, it was seen that processVariable[variable] can contain spaces at the end, which causes tests to fail. So trim the strings before comparing.
             expect(vars[variable]?.trim()).to.equal(
                 processVariables[variable]?.trim(),
-                'Value of the variable is incorrect'
+                'Value of the variable is incorrect',
             );
         });
     });
 
     test('Variables from file should take precedence over variables in process', async () => {
-        // tslint:disable-next-line:no-invalid-template-strings
         await updateSetting('envFile', '${workspaceRoot}/.env', workspace4PyFile, ConfigurationTarget.WorkspaceFolder);
         const processVariables = { ...process.env };
         if (processVariables.PYTHONPATH) {
@@ -159,7 +143,6 @@ suite('Multiroot Environment Variables Provider', () => {
     });
 
     test('PYTHONPATH from process variables should be merged with that in env file', async () => {
-        // tslint:disable-next-line:no-invalid-template-strings
         await updateSetting('envFile', '${workspaceRoot}/.env', workspace4PyFile, ConfigurationTarget.WorkspaceFolder);
         const processVariables = { ...process.env };
         processVariables.PYTHONPATH = '/usr/one/TWO';
@@ -173,7 +156,6 @@ suite('Multiroot Environment Variables Provider', () => {
     });
 
     test('PATH from process variables should be included in in variables returned (mock variables)', async () => {
-        // tslint:disable-next-line:no-invalid-template-strings
         await updateSetting('envFile', '${workspaceRoot}/.env', workspace4PyFile, ConfigurationTarget.WorkspaceFolder);
         const processVariables = { ...process.env };
         processVariables.PYTHONPATH = '/usr/one/TWO';
@@ -192,10 +174,9 @@ suite('Multiroot Environment Variables Provider', () => {
         // this test is flaky on windows (likely the value of the path property
         // has incorrect path separator chars). Tracked by GH #4756
         if (isOs(OSType.Windows)) {
-            // tslint:disable-next-line:no-invalid-this
-            return this.skip();
+            this.skip();
         }
-        // tslint:disable-next-line:no-invalid-template-strings
+
         await updateSetting('envFile', '${workspaceRoot}/.env', workspace4PyFile, ConfigurationTarget.WorkspaceFolder);
         const processVariables = { ...process.env };
         processVariables.PYTHONPATH = '/usr/one/TWO';
@@ -210,7 +191,6 @@ suite('Multiroot Environment Variables Provider', () => {
     });
 
     test('PYTHONPATH and PATH from process variables should be merged with that in env file', async () => {
-        // tslint:disable-next-line:no-invalid-template-strings
         await updateSetting('envFile', '${workspaceRoot}/.env5', workspace4PyFile, ConfigurationTarget.WorkspaceFolder);
         const processVariables = { ...process.env };
         processVariables.PYTHONPATH = '/usr/one/TWO';
@@ -228,7 +208,6 @@ suite('Multiroot Environment Variables Provider', () => {
     });
 
     test('PATH and PYTHONPATH from env file should be returned as is', async () => {
-        // tslint:disable-next-line:no-invalid-template-strings
         await updateSetting('envFile', '${workspaceRoot}/.env5', workspace4PyFile, ConfigurationTarget.WorkspaceFolder);
         const processVariables = { ...process.env };
         if (processVariables.PYTHONPATH) {
@@ -250,7 +229,6 @@ suite('Multiroot Environment Variables Provider', () => {
     });
 
     test('PYTHONPATH and PATH from process variables should be included in variables returned', async () => {
-        // tslint:disable-next-line:no-invalid-template-strings
         await updateSetting('envFile', '${workspaceRoot}/.env2', workspace4PyFile, ConfigurationTarget.WorkspaceFolder);
         const processVariables = { ...process.env };
         processVariables.PYTHONPATH = '/usr/one/TWO';
@@ -265,7 +243,6 @@ suite('Multiroot Environment Variables Provider', () => {
     });
 
     test('PYTHONPATH should not exist in variables returned', async () => {
-        // tslint:disable-next-line:no-invalid-template-strings
         await updateSetting('envFile', '${workspaceRoot}/.env2', workspace4PyFile, ConfigurationTarget.WorkspaceFolder);
         const processVariables = { ...process.env };
         if (processVariables.PYTHONPATH) {
@@ -288,7 +265,7 @@ suite('Multiroot Environment Variables Provider', () => {
         if (processVariables.PYTHONPATH) {
             delete processVariables.PYTHONPATH;
         }
-        // tslint:disable-next-line:no-invalid-template-strings
+
         await updateSetting('envFile', '${workspaceRoot}/.env', workspace4PyFile, ConfigurationTarget.WorkspaceFolder);
         const envProvider = getVariablesProvider(processVariables);
         const vars = await envProvider.getEnvironmentVariables(workspace4PyFile);
@@ -306,7 +283,7 @@ suite('Multiroot Environment Variables Provider', () => {
         if (processVariables.PYTHONPATH) {
             delete processVariables.PYTHONPATH;
         }
-        // tslint:disable-next-line:no-invalid-template-strings
+
         await updateSetting('envFile', '${workspaceRoot}/.env', workspace4PyFile, ConfigurationTarget.WorkspaceFolder);
         const envProvider = getVariablesProvider(processVariables);
         const vars = await envProvider.getEnvironmentVariables(workspace4PyFile);
@@ -319,9 +296,9 @@ suite('Multiroot Environment Variables Provider', () => {
 
     test('Custom variables will be refreshed when settings points to a different env file', async function () {
         // https://github.com/microsoft/vscode-python/issues/12563
-        // tslint:disable-next-line: no-invalid-this
+
         return this.skip();
-        // tslint:disable-next-line:no-invalid-template-strings
+
         await updateSetting('envFile', '${workspaceRoot}/.env', workspace4PyFile, ConfigurationTarget.WorkspaceFolder);
         const processVariables = { ...process.env };
         if (processVariables.PYTHONPATH) {
@@ -334,7 +311,7 @@ suite('Multiroot Environment Variables Provider', () => {
         expect(vars).to.have.property('PYTHONPATH', '../workspace5', 'PYTHONPATH value is invalid');
 
         const settings = workspace.getConfiguration('python', workspace4PyFile);
-        // tslint:disable-next-line:no-invalid-template-strings
+
         await settings.update('envFile', '${workspaceRoot}/.env2', ConfigurationTarget.WorkspaceFolder);
 
         // Wait for settings to get refreshed.

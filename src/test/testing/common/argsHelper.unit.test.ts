@@ -3,10 +3,9 @@
 
 'use strict';
 
-// tslint:disable:max-func-body-length no-any no-conditional-assignment no-increment-decrement no-invalid-this no-require-imports no-var-requires
 import { expect, use } from 'chai';
 import { ArgumentsHelper } from '../../../client/testing/common/argumentsHelper';
-import { IArgumentsHelper } from '../../../client/testing/types';
+import { IArgumentsHelper } from '../../../client/testing/common/types';
 const assertArrays = require('chai-arrays');
 use(assertArrays);
 

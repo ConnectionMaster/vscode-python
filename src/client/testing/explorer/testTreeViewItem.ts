@@ -3,16 +3,13 @@
 
 'use strict';
 
-// tslint:disable:max-classes-per-file
-
 import { ThemeIcon, TreeItem, TreeItemCollapsibleState, Uri } from 'vscode';
 import { Commands } from '../../common/constants';
 import { getIcon } from '../../common/utils/icons';
 import { noop } from '../../common/utils/misc';
 import { Icons } from '../common/constants';
 import { getTestDataItemType, isSubtestsParent } from '../common/testUtils';
-import { TestResult, TestStatus, TestSuite } from '../common/types';
-import { TestDataItem, TestDataItemType } from '../types';
+import { TestDataItem, TestDataItemType, TestResult, TestStatus, TestSuite } from '../common/types';
 
 function getDefaultCollapsibleState(data: TestDataItem): TreeItemCollapsibleState {
     return getTestDataItemType(data) === TestDataItemType.function
@@ -31,7 +28,7 @@ export class TestTreeItem extends TreeItem {
     constructor(
         public readonly resource: Uri,
         public readonly data: Readonly<TestDataItem>,
-        collapsibleStatue: TreeItemCollapsibleState = getDefaultCollapsibleState(data)
+        collapsibleStatue: TreeItemCollapsibleState = getDefaultCollapsibleState(data),
     ) {
         super(data.name, collapsibleStatue);
         this.testType = getTestDataItemType(this.data);
@@ -128,7 +125,7 @@ export class TestTreeItem extends TreeItem {
                 this.command = {
                     command: Commands.navigateToTestFile,
                     title: 'Open',
-                    arguments: [this.resource, this.data]
+                    arguments: [this.resource, this.data],
                 };
                 break;
             }
@@ -136,7 +133,7 @@ export class TestTreeItem extends TreeItem {
                 this.command = {
                     command: Commands.navigateToTestFunction,
                     title: 'Open',
-                    arguments: [this.resource, this.data, false]
+                    arguments: [this.resource, this.data, false],
                 };
                 break;
             }
@@ -145,14 +142,14 @@ export class TestTreeItem extends TreeItem {
                     this.command = {
                         command: Commands.navigateToTestFunction,
                         title: 'Open',
-                        arguments: [this.resource, this.data, false]
+                        arguments: [this.resource, this.data, false],
                     };
                     break;
                 }
                 this.command = {
                     command: Commands.navigateToTestSuite,
                     title: 'Open',
-                    arguments: [this.resource, this.data, false]
+                    arguments: [this.resource, this.data, false],
                 };
                 break;
             }

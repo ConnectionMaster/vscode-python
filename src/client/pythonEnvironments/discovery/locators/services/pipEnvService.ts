@@ -10,13 +10,12 @@ import { IFileSystem, IPlatformService } from '../../../../common/platform/types
 import { IProcessServiceFactory } from '../../../../common/process/types';
 import { IConfigurationService, ICurrentProcess } from '../../../../common/types';
 import { StopWatch } from '../../../../common/utils/stopWatch';
-import { IInterpreterHelper, IPipEnvService } from '../../../../interpreter/contracts';
+import { GetInterpreterOptions, IInterpreterHelper, IPipEnvService } from '../../../../interpreter/contracts';
 import { IPipEnvServiceHelper } from '../../../../interpreter/locators/types';
 import { IServiceContainer } from '../../../../ioc/types';
 import { sendTelemetryEvent } from '../../../../telemetry';
 import { EventName } from '../../../../telemetry/constants';
 import { EnvironmentType, PythonEnvironment } from '../../../info';
-import { GetInterpreterLocatorOptions } from '../types';
 import { CacheableLocatorService } from './cacheableLocatorService';
 
 const pipEnvFileNameVariable = 'PIPENV_PIPFILE';
@@ -45,8 +44,9 @@ export class PipEnvService extends CacheableLocatorService implements IPipEnvSer
         this.pipEnvServiceHelper = this.serviceContainer.get<IPipEnvServiceHelper>(IPipEnvServiceHelper);
     }
 
-    // tslint:disable-next-line:no-empty
-    public dispose() {}
+    public dispose(): void {
+        // No body
+    }
 
     public async isRelatedPipEnvironment(dir: string, pythonPath: string): Promise<boolean> {
         if (!this.didTriggerInterpreterSuggestions) {
@@ -65,7 +65,7 @@ export class PipEnvService extends CacheableLocatorService implements IPipEnvSer
         return this.didTriggerInterpreterSuggestions ? this.configService.getSettings().pipenvPath : '';
     }
 
-    public async getInterpreters(resource?: Uri, options?: GetInterpreterLocatorOptions): Promise<PythonEnvironment[]> {
+    public async getInterpreters(resource?: Uri, options?: GetInterpreterOptions): Promise<PythonEnvironment[]> {
         if (!this.didTriggerInterpreterSuggestions) {
             return [];
         }
@@ -99,12 +99,12 @@ export class PipEnvService extends CacheableLocatorService implements IPipEnvSer
     private async getInterpreterFromPipenv(pipenvCwd: string): Promise<PythonEnvironment | undefined> {
         const interpreterPath = await this.getInterpreterPathFromPipenv(pipenvCwd);
         if (!interpreterPath) {
-            return;
+            return undefined;
         }
 
         const details = await this.helper.getInterpreterInformation(interpreterPath);
         if (!details) {
-            return;
+            return undefined;
         }
         this._hasInterpreters.resolve(true);
         await this.pipEnvServiceHelper.trackWorkspaceFolder(interpreterPath, Uri.file(pipenvCwd));
@@ -129,7 +129,7 @@ export class PipEnvService extends CacheableLocatorService implements IPipEnvSer
     private async getInterpreterPathFromPipenv(cwd: string, ignoreErrors = false): Promise<string | undefined> {
         // Quick check before actually running pipenv
         if (!(await this.checkIfPipFileExists(cwd))) {
-            return;
+            return undefined;
         }
         try {
             // call pipenv --version just to see if pipenv is in the PATH
@@ -139,7 +139,7 @@ export class PipEnvService extends CacheableLocatorService implements IPipEnvSer
                 appShell.showWarningMessage(
                     `Workspace contains Pipfile but '${this.executable}' was not found. Make sure '${this.executable}' is on the PATH.`,
                 );
-                return;
+                return undefined;
             }
             // The --py command will fail if the virtual environment has not been setup yet.
             // so call pipenv --venv to check for the virtual environment first.
@@ -149,17 +149,18 @@ export class PipEnvService extends CacheableLocatorService implements IPipEnvSer
                 appShell.showWarningMessage(
                     'Workspace contains Pipfile but the associated virtual environment has not been setup. Setup the virtual environment manually if needed.',
                 );
-                return;
+                return undefined;
             }
             const pythonPath = await this.invokePipenv('--py', cwd);
             return pythonPath && (await this.fs.fileExists(pythonPath)) ? pythonPath : undefined;
-            // tslint:disable-next-line:no-empty
         } catch (error) {
             traceError('PipEnv identification failed', error);
             if (ignoreErrors) {
                 return undefined;
             }
         }
+
+        return undefined;
     }
 
     private async checkIfPipFileExists(cwd: string): Promise<boolean> {
@@ -187,7 +188,6 @@ export class PipEnvService extends CacheableLocatorService implements IPipEnvSer
                 }
                 return stdout;
             }
-            // tslint:disable-next-line:no-empty
         } catch (error) {
             const platformService = this.serviceContainer.get<IPlatformService>(IPlatformService);
             const currentProc = this.serviceContainer.get<ICurrentProcess>(ICurrentProcess);
@@ -195,10 +195,13 @@ export class PipEnvService extends CacheableLocatorService implements IPipEnvSer
                 LC_ALL: currentProc.env.LC_ALL,
                 LANG: currentProc.env.LANG,
             };
-            enviromentVariableValues[platformService.pathVariableName] = currentProc.env[platformService.pathVariableName];
+            enviromentVariableValues[platformService.pathVariableName] =
+                currentProc.env[platformService.pathVariableName];
 
             traceWarning('Error in invoking PipEnv', error);
             traceWarning(`Relevant Environment Variables ${JSON.stringify(enviromentVariableValues, undefined, 4)}`);
         }
+
+        return undefined;
     }
 }

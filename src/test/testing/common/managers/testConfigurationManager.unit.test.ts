@@ -3,23 +3,26 @@
 
 'use strict';
 
-// tslint:disable:no-any
-
 import * as TypeMoq from 'typemoq';
 import { OutputChannel, Uri } from 'vscode';
 import { IInstaller, IOutputChannel, Product } from '../../../../client/common/types';
 import { getNamesAndValues } from '../../../../client/common/utils/enum';
 import { IServiceContainer } from '../../../../client/ioc/types';
-import { TEST_OUTPUT_CHANNEL, UNIT_TEST_PRODUCTS } from '../../../../client/testing/common/constants';
+import { UNIT_TEST_PRODUCTS } from '../../../../client/testing/common/constants';
 import { TestConfigurationManager } from '../../../../client/testing/common/managers/testConfigurationManager';
-import { UnitTestProduct } from '../../../../client/testing/common/types';
-import { ITestConfigSettingsService } from '../../../../client/testing/types';
+import { ITestConfigSettingsService, UnitTestProduct } from '../../../../client/testing/common/types';
+import { TEST_OUTPUT_CHANNEL } from '../../../../client/testing/constants';
 
 class MockTestConfigurationManager extends TestConfigurationManager {
-    public requiresUserToConfigure(_wkspace: Uri): Promise<boolean> {
+    // The workspace arg is ignored.
+    // eslint-disable-next-line class-methods-use-this
+    public requiresUserToConfigure(): Promise<boolean> {
         throw new Error('Method not implemented.');
     }
-    public configure(_wkspace: any): Promise<any> {
+
+    // The workspace arg is ignored.
+    // eslint-disable-next-line class-methods-use-this
+    public configure(): Promise<void> {
         throw new Error('Method not implemented.');
     }
 }
@@ -48,7 +51,7 @@ suite('Unit Test Configuration Manager (unit)', () => {
                 manager = new MockTestConfigurationManager(
                     workspaceUri,
                     product as UnitTestProduct,
-                    serviceContainer.object
+                    serviceContainer.object,
                 );
             });
 

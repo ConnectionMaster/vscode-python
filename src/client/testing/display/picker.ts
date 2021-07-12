@@ -5,17 +5,16 @@ import { IApplicationShell, ICommandManager } from '../../common/application/typ
 import * as constants from '../../common/constants';
 import { IFileSystem } from '../../common/platform/types';
 import { IServiceContainer } from '../../ioc/types';
-import { CommandSource } from '../common/constants';
 import {
     FlattenedTestFunction,
     ITestCollectionStorageService,
+    ITestDisplay,
     TestFile,
     TestFunction,
     Tests,
     TestStatus,
-    TestsToRun
+    TestsToRun,
 } from '../common/types';
-import { ITestDisplay } from '../types';
 
 @injectable()
 export class TestDisplay implements ITestDisplay {
@@ -23,7 +22,7 @@ export class TestDisplay implements ITestDisplay {
     private readonly appShell: IApplicationShell;
     constructor(
         @inject(IServiceContainer) private readonly serviceRegistry: IServiceContainer,
-        @inject(ICommandManager) private readonly commandManager: ICommandManager
+        @inject(ICommandManager) private readonly commandManager: ICommandManager,
     ) {
         this.testCollectionStorage = serviceRegistry.get<ITestCollectionStorageService>(ITestCollectionStorageService);
         this.appShell = serviceRegistry.get<IApplicationShell>(IApplicationShell);
@@ -35,12 +34,12 @@ export class TestDisplay implements ITestDisplay {
             }
         });
     }
-    public displayTestUI(cmdSource: CommandSource, wkspace: Uri) {
+    public displayTestUI(cmdSource: constants.CommandSource, wkspace: Uri) {
         const tests = this.testCollectionStorage.getTests(wkspace);
         this.appShell
             .showQuickPick(buildItems(tests), { matchOnDescription: true, matchOnDetail: true })
             .then((item) =>
-                item ? onItemSelected(this.commandManager, cmdSource, wkspace, item, false) : Promise.resolve()
+                item ? onItemSelected(this.commandManager, cmdSource, wkspace, item, false) : Promise.resolve(),
             );
     }
     public selectTestFunction(rootDirectory: string, tests: Tests): Promise<FlattenedTestFunction> {
@@ -48,7 +47,7 @@ export class TestDisplay implements ITestDisplay {
             this.appShell
                 .showQuickPick(buildItemsForFunctions(rootDirectory, tests.testFunctions), {
                     matchOnDescription: true,
-                    matchOnDetail: true
+                    matchOnDetail: true,
                 })
                 .then((item) => {
                     if (item && item.fn) {
@@ -63,7 +62,7 @@ export class TestDisplay implements ITestDisplay {
             this.appShell
                 .showQuickPick(buildItemsForTestFiles(rootDirectory, tests.testFiles), {
                     matchOnDescription: true,
-                    matchOnDetail: true
+                    matchOnDetail: true,
                 })
                 .then((item) => {
                     if (item && item.testFile) {
@@ -74,12 +73,12 @@ export class TestDisplay implements ITestDisplay {
         });
     }
     public displayFunctionTestPickerUI(
-        cmdSource: CommandSource,
+        cmdSource: constants.CommandSource,
         wkspace: Uri,
         rootDirectory: string,
         file: Uri,
         testFunctions: TestFunction[],
-        debug?: boolean
+        debug?: boolean,
     ) {
         const tests = this.testCollectionStorage.getTests(wkspace);
         if (!tests) {
@@ -88,7 +87,7 @@ export class TestDisplay implements ITestDisplay {
         const fileName = file.fsPath;
         const fs = this.serviceRegistry.get<IFileSystem>(IFileSystem);
         const testFile = tests.testFiles.find(
-            (item) => item.name === fileName || fs.arePathsSame(item.fullPath, fileName)
+            (item) => item.name === fileName || fs.arePathsSame(item.fullPath, fileName),
         );
         if (!testFile) {
             return;
@@ -104,7 +103,7 @@ export class TestDisplay implements ITestDisplay {
         this.appShell
             .showQuickPick(runAllItem.concat(...functionItems), { matchOnDescription: true, matchOnDetail: true })
             .then((testItem) =>
-                testItem ? onItemSelected(this.commandManager, cmdSource, wkspace, testItem, debug) : Promise.resolve()
+                testItem ? onItemSelected(this.commandManager, cmdSource, wkspace, testItem, debug) : Promise.resolve(),
             );
     }
 }
@@ -122,7 +121,7 @@ export enum Type {
     SelectAndRunMethod = 9,
     DebugMethod = 10,
     Configure = 11,
-    RunParametrized = 12
+    RunParametrized = 12,
 }
 const statusIconMapping = new Map<TestStatus, string>();
 statusIconMapping.set(TestStatus.Pass, constants.Octicons.Test_Pass);
@@ -176,7 +175,7 @@ function buildItems(tests?: Tests): TestItem[] {
             description: '',
             label: 'Run Failed Tests',
             type: Type.RunFailed,
-            detail: `${constants.Octicons.Test_Fail} ${tests.summary.failures} Failed`
+            detail: `${constants.Octicons.Test_Fail} ${tests.summary.failures} Failed`,
         });
     }
 
@@ -191,7 +190,7 @@ const statusSortPrefix = {
     [TestStatus.Discovering]: undefined,
     [TestStatus.Idle]: undefined,
     [TestStatus.Running]: undefined,
-    [TestStatus.Unknown]: undefined
+    [TestStatus.Unknown]: undefined,
 };
 
 function buildRunAllParametrizedItem(tests: FlattenedTestFunction[], debug: boolean = false): TestItem[] {
@@ -204,8 +203,8 @@ function buildRunAllParametrizedItem(tests: FlattenedTestFunction[], debug: bool
             description: '',
             label: debug ? 'Debug All' : 'Run All',
             type: Type.RunParametrized,
-            fns: testFunctions
-        }
+            fns: testFunctions,
+        },
     ];
 }
 function buildItemsForFunctions(
@@ -213,7 +212,7 @@ function buildItemsForFunctions(
     tests: FlattenedTestFunction[],
     sortBasedOnResults: boolean = false,
     displayStatusIcons: boolean = false,
-    debug: boolean = false
+    debug: boolean = false,
 ): TestItem[] {
     const functionItems: TestItem[] = [];
     tests.forEach((fn) => {
@@ -227,7 +226,7 @@ function buildItemsForFunctions(
             detail: path.relative(rootDirectory, fn.parentTestFile.fullPath),
             label: icon + fn.testFunction.name,
             type: debug === true ? Type.DebugMethod : Type.RunMethod,
-            fn: fn
+            fn: fn,
         });
     });
     functionItems.sort((a, b) => {
@@ -258,7 +257,7 @@ function buildItemsForTestFiles(rootDirectory: string, testFiles: TestFile[]): T
             detail: path.relative(rootDirectory, testFile.fullPath),
             type: Type.RunFile,
             label: path.basename(testFile.fullPath),
-            testFile: testFile
+            testFile: testFile,
         };
     });
     fileItems.sort((a, b) => {
@@ -277,10 +276,10 @@ function buildItemsForTestFiles(rootDirectory: string, testFiles: TestFile[]): T
 }
 export function onItemSelected(
     commandManager: ICommandManager,
-    cmdSource: CommandSource,
+    cmdSource: constants.CommandSource,
     wkspace: Uri,
     selection: TestItem,
-    debug?: boolean
+    debug?: boolean,
 ) {
     if (!selection || typeof selection.type !== 'number') {
         return;
@@ -295,7 +294,7 @@ export function onItemSelected(
                 undefined,
                 cmdSource,
                 wkspace,
-                undefined
+                undefined,
             );
         }
         case Type.RunParametrized: {
@@ -305,7 +304,7 @@ export function onItemSelected(
                 cmdSource,
                 wkspace,
                 selection.fns!,
-                debug!
+                debug!,
             );
         }
         case Type.ReDiscover: {
@@ -330,7 +329,7 @@ export function onItemSelected(
                 undefined,
                 cmdSource,
                 wkspace,
-                testsToRun
+                testsToRun,
             );
         }
         case Type.DebugMethod: {
@@ -340,7 +339,7 @@ export function onItemSelected(
                 undefined,
                 cmdSource,
                 wkspace,
-                testsToRun
+                testsToRun,
             );
         }
         case Type.Configure: {

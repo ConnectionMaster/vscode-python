@@ -5,9 +5,6 @@
 import { IndentAction, LanguageConfiguration } from 'vscode';
 import { verboseRegExp } from '../common/utils/regexp';
 
-// tslint:disable:no-multiline-string
-
-// tslint:disable-next-line:max-func-body-length
 export function getLanguageConfiguration(): LanguageConfiguration {
     return {
         onEnterRules: [
@@ -21,8 +18,8 @@ export function getLanguageConfiguration(): LanguageConfiguration {
                     $
                 `),
                 action: {
-                    indentAction: IndentAction.Indent
-                }
+                    indentAction: IndentAction.Indent,
+                },
             },
             // continue comments
             {
@@ -30,8 +27,8 @@ export function getLanguageConfiguration(): LanguageConfiguration {
                 afterText: /.+$/,
                 action: {
                     indentAction: IndentAction.None,
-                    appendText: '# '
-                }
+                    appendText: '# ',
+                },
             },
             // indent on enter (block-beginning statements)
             {
@@ -59,7 +56,9 @@ export function getLanguageConfiguration(): LanguageConfiguration {
                                 elif |
                                 while |
                                 with |
-                                async \\s+ with
+                                async \\s+ with |
+                                match |
+                                case
                             )
                             \\b .*
                         ) |
@@ -74,19 +73,25 @@ export function getLanguageConfiguration(): LanguageConfiguration {
                     $
                 `),
                 action: {
-                    indentAction: IndentAction.Indent
-                }
+                    indentAction: IndentAction.Indent,
+                },
             },
             // outdent on enter (block-ending statements)
             {
+                /**
+                 * This does not handle all cases. Notable omissions here are
+                 * "return" and "raise" which are complicated by the need to
+                 * only outdent when the cursor is at the end of an expression
+                 * rather than, say, between the parentheses of a tail-call or
+                 * exception construction. (see issue #10583)
+                 */
                 beforeText: verboseRegExp(`
                     ^
                     (?:
                         (?:
                             \\s*
                             (?:
-                                pass |
-                                raise \\s+ [^#\\s] [^#]*
+                                pass
                             )
                         ) |
                         (?:
@@ -103,12 +108,12 @@ export function getLanguageConfiguration(): LanguageConfiguration {
                     $
                 `),
                 action: {
-                    indentAction: IndentAction.Outdent
-                }
-            }
+                    indentAction: IndentAction.Outdent,
+                },
+            },
             // Note that we do not currently have an auto-dedent
             // solution for "elif", "else", "except", and "finally".
             // We had one but had to remove it (see issue #6886).
-        ]
+        ],
     };
 }

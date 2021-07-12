@@ -18,7 +18,7 @@ import {
     FormatterProductPathService,
     LinterProductPathService,
     RefactoringLibraryProductPathService,
-    TestFrameworkProductPathService
+    TestFrameworkProductPathService,
 } from './productPath';
 import { ProductService } from './productService';
 import {
@@ -28,7 +28,7 @@ import {
     INSIDERS_INSTALLER,
     IProductPathService,
     IProductService,
-    STABLE_INSTALLER
+    STABLE_INSTALLER,
 } from './types';
 
 export function registerTypes(serviceManager: IServiceManager) {
@@ -40,40 +40,40 @@ export function registerTypes(serviceManager: IServiceManager) {
     serviceManager.addSingleton<IExtensionBuildInstaller>(
         IExtensionBuildInstaller,
         StableBuildInstaller,
-        STABLE_INSTALLER
+        STABLE_INSTALLER,
     );
     serviceManager.addSingleton<IExtensionBuildInstaller>(
         IExtensionBuildInstaller,
         InsidersBuildInstaller,
-        INSIDERS_INSTALLER
+        INSIDERS_INSTALLER,
     );
 
     serviceManager.addSingleton<IProductService>(IProductService, ProductService);
     serviceManager.addSingleton<IProductPathService>(
         IProductPathService,
         CTagsProductPathService,
-        ProductType.WorkspaceSymbols
+        ProductType.WorkspaceSymbols,
     );
     serviceManager.addSingleton<IProductPathService>(
         IProductPathService,
         FormatterProductPathService,
-        ProductType.Formatter
+        ProductType.Formatter,
     );
     serviceManager.addSingleton<IProductPathService>(IProductPathService, LinterProductPathService, ProductType.Linter);
     serviceManager.addSingleton<IProductPathService>(
         IProductPathService,
         TestFrameworkProductPathService,
-        ProductType.TestFramework
+        ProductType.TestFramework,
     );
     serviceManager.addSingleton<IProductPathService>(
         IProductPathService,
         RefactoringLibraryProductPathService,
-        ProductType.RefactoringLibrary
+        ProductType.RefactoringLibrary,
     );
     serviceManager.addSingleton<IProductPathService>(
         IProductPathService,
         DataScienceProductPathService,
-        ProductType.DataScience
+        ProductType.DataScience,
     );
     serviceManager.addSingleton<IWebviewPanelProvider>(IWebviewPanelProvider, WebviewPanelProvider);
 }

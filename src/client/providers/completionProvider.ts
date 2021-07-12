@@ -18,11 +18,18 @@ export class PythonCompletionItemProvider implements vscode.CompletionItemProvid
         this.configService = serviceContainer.get<IConfigurationService>(IConfigurationService);
     }
 
-    @captureTelemetry(EventName.COMPLETION)
+    @captureTelemetry(
+        EventName.COMPLETION,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        PythonCompletionItemProvider.completionMeasure,
+    )
     public async provideCompletionItems(
         document: vscode.TextDocument,
         position: vscode.Position,
-        token: vscode.CancellationToken
+        token: vscode.CancellationToken,
     ): Promise<vscode.CompletionItem[]> {
         const items = await this.completionSource.getVsCodeCompletionItems(document, position, token);
         if (this.configService.isTestExecution()) {
@@ -33,9 +40,16 @@ export class PythonCompletionItemProvider implements vscode.CompletionItemProvid
         return items;
     }
 
+    private static completionMeasure(
+        _this: PythonCompletionItemProvider,
+        result: vscode.CompletionItem[] | undefined,
+    ): Record<string, number> {
+        return { resultLength: result?.length ?? 0 };
+    }
+
     public async resolveCompletionItem(
         item: vscode.CompletionItem,
-        token: vscode.CancellationToken
+        token: vscode.CancellationToken,
     ): Promise<vscode.CompletionItem> {
         if (!item.documentation) {
             const itemInfos = await this.completionSource.getDocumentation(item, token);

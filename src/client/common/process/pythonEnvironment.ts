@@ -12,6 +12,7 @@ import * as internalPython from './internal/python';
 import { ExecutionResult, IProcessService, ShellOptions, SpawnOptions } from './types';
 
 class PythonEnvironment {
+    private cachedExecutablePath: Map<string, Promise<string>> = new Map<string, Promise<string>>();
     private cachedInterpreterInformation: InterpreterInformation | undefined | null = null;
 
     constructor(
@@ -24,7 +25,7 @@ class PythonEnvironment {
             // from ProcessService:
             exec(file: string, args: string[]): Promise<ExecutionResult<string>>;
             shellExec(command: string, timeout: number): Promise<ExecutionResult<string>>;
-        }
+        },
     ) {}
 
     public getExecutionInfo(pythonArgs: string[] = []): PythonExecInfo {
@@ -49,8 +50,28 @@ class PythonEnvironment {
         if (await this.deps.isValidExecutable(this.pythonPath)) {
             return this.pythonPath;
         }
+        const result = this.cachedExecutablePath.get(this.pythonPath);
+        if (result !== undefined) {
+            // Another call for this environment has already been made, return its result
+            return result;
+        }
         const python = this.getExecutionInfo();
-        return getExecutablePath(python, this.deps.exec);
+        const promise = getExecutablePath(python, this.deps.exec);
+        this.cachedExecutablePath.set(this.pythonPath, promise);
+        return promise;
+    }
+
+    public async getModuleVersion(moduleName: string): Promise<string | undefined> {
+        const [args, parse] = internalPython.getModuleVersion(moduleName);
+        const info = this.getExecutionInfo(args);
+        let data: ExecutionResult<string>;
+        try {
+            data = await this.deps.exec(info.command, info.args);
+        } catch (ex) {
+            traceInfo(`Error when getting version of module ${moduleName}`, ex);
+            return undefined;
+        }
+        return parse(data.stdout);
     }
 
     public async isModuleInstalled(moduleName: string): Promise<boolean> {
@@ -59,7 +80,8 @@ class PythonEnvironment {
         const info = this.getExecutionInfo(args);
         try {
             await this.deps.exec(info.command, info.args);
-        } catch {
+        } catch (ex) {
+            traceInfo(`Error when checking if module is installed ${moduleName}`, ex);
             return false;
         }
         return true;
@@ -81,14 +103,14 @@ function createDeps(
     observablePythonArgv: string[] | undefined,
     // from ProcessService:
     exec: (file: string, args: string[], options?: SpawnOptions) => Promise<ExecutionResult<string>>,
-    shellExec: (command: string, options?: ShellOptions) => Promise<ExecutionResult<string>>
+    shellExec: (command: string, options?: ShellOptions) => Promise<ExecutionResult<string>>,
 ) {
     return {
         getPythonArgv: (python: string) => pythonArgv || [python],
         getObservablePythonArgv: (python: string) => observablePythonArgv || [python],
         isValidExecutable,
         exec: async (cmd: string, args: string[]) => exec(cmd, args, { throwOnStdErr: true }),
-        shellExec: async (text: string, timeout: number) => shellExec(text, { timeout })
+        shellExec: async (text: string, timeout: number) => shellExec(text, { timeout }),
     };
 }
 
@@ -96,15 +118,15 @@ export function createPythonEnv(
     pythonPath: string,
     // These are used to generate the deps.
     procs: IProcessService,
-    fs: IFileSystem
+    fs: IFileSystem,
 ): PythonEnvironment {
     const deps = createDeps(
-        async (filename) => fs.fileExists(filename),
+        async (filename) => fs.pathExists(filename),
         // We use the default: [pythonPath].
         undefined,
         undefined,
         (file, args, opts) => procs.exec(file, args, opts),
-        (command, opts) => procs.shellExec(command, opts)
+        (command, opts) => procs.shellExec(command, opts),
     );
     return new PythonEnvironment(pythonPath, deps);
 }
@@ -115,7 +137,7 @@ export function createCondaEnv(
     pythonPath: string,
     // These are used to generate the deps.
     procs: IProcessService,
-    fs: IFileSystem
+    fs: IFileSystem,
 ): PythonEnvironment {
     const runArgs = ['run'];
     if (condaInfo.name === '') {
@@ -125,15 +147,15 @@ export function createCondaEnv(
     }
     const pythonArgv = [condaFile, ...runArgs, 'python'];
     const deps = createDeps(
-        async (filename) => fs.fileExists(filename),
+        async (filename) => fs.pathExists(filename),
         pythonArgv,
-        // tslint:disable-next-line:no-suspicious-comment
+
         // TODO: Use pythonArgv here once 'conda run' can be
         // run without buffering output.
         // See https://github.com/microsoft/vscode-python/issues/8473.
         undefined,
         (file, args, opts) => procs.exec(file, args, opts),
-        (command, opts) => procs.shellExec(command, opts)
+        (command, opts) => procs.shellExec(command, opts),
     );
     return new PythonEnvironment(pythonPath, deps);
 }
@@ -141,7 +163,7 @@ export function createCondaEnv(
 export function createWindowsStoreEnv(
     pythonPath: string,
     // These are used to generate the deps.
-    procs: IProcessService
+    procs: IProcessService,
 ): PythonEnvironment {
     const deps = createDeps(
         /**
@@ -157,7 +179,7 @@ export function createWindowsStoreEnv(
         undefined,
         undefined,
         (file, args, opts) => procs.exec(file, args, opts),
-        (command, opts) => procs.shellExec(command, opts)
+        (command, opts) => procs.shellExec(command, opts),
     );
     return new PythonEnvironment(pythonPath, deps);
 }

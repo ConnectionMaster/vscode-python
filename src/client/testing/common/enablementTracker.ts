@@ -10,8 +10,8 @@ import { IWorkspaceService } from '../../common/application/types';
 import { IDisposableRegistry, Resource } from '../../common/types';
 import { sendTelemetryEvent } from '../../telemetry';
 import { EventName } from '../../telemetry/constants';
-import { ITestConfigSettingsService } from '../types';
-import { ITestsHelper, TestProvider } from './types';
+import { TestProvider } from '../types';
+import { ITestConfigSettingsService, ITestsHelper } from './types';
 
 @injectable()
 export class EnablementTracker implements IExtensionSingleActivationService {
@@ -19,7 +19,7 @@ export class EnablementTracker implements IExtensionSingleActivationService {
         @inject(IWorkspaceService) private readonly workspaceService: IWorkspaceService,
         @inject(IDisposableRegistry) private readonly disposables: IDisposableRegistry,
         @inject(ITestConfigSettingsService) private readonly testConfig: ITestConfigSettingsService,
-        @inject(ITestsHelper) private readonly testsHelper: ITestsHelper
+        @inject(ITestsHelper) private readonly testsHelper: ITestsHelper,
     ) {}
     public async activate(): Promise<void> {
         this.disposables.push(this.workspaceService.onDidChangeConfiguration(this.onDidChangeConfiguration, this));

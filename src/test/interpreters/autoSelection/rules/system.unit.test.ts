@@ -3,8 +3,6 @@
 
 'use strict';
 
-// tslint:disable:no-unnecessary-override no-any max-func-body-length no-invalid-this
-
 import * as assert from 'assert';
 import { expect } from 'chai';
 import { SemVer } from 'semver';
@@ -33,32 +31,32 @@ suite('Interpreters - Auto Selection - System Interpreters Rule', () => {
     class SystemWideInterpretersAutoSelectionRuleTest extends SystemWideInterpretersAutoSelectionRule {
         public async setGlobalInterpreter(
             interpreter?: PythonEnvironment,
-            manager?: IInterpreterAutoSelectionService
+            manager?: IInterpreterAutoSelectionService,
         ): Promise<boolean> {
             return super.setGlobalInterpreter(interpreter, manager);
         }
         public async onAutoSelectInterpreter(
             resource: Resource,
-            manager?: IInterpreterAutoSelectionService
+            manager?: IInterpreterAutoSelectionService,
         ): Promise<NextAction> {
             return super.onAutoSelectInterpreter(resource, manager);
         }
     }
     setup(() => {
         stateFactory = mock(PersistentStateFactory);
-        state = mock(PersistentState);
+        state = mock(PersistentState) as PersistentState<PythonEnvironment | undefined>;
         fs = mock(FileSystem);
         helper = mock(InterpreterHelper);
         interpreterService = mock(InterpreterService);
 
         when(stateFactory.createGlobalPersistentState<PythonEnvironment | undefined>(anything(), undefined)).thenReturn(
-            instance(state)
+            instance(state),
         );
         rule = new SystemWideInterpretersAutoSelectionRuleTest(
             instance(fs),
             instance(helper),
             instance(stateFactory),
-            instance(interpreterService)
+            instance(interpreterService),
         );
     });
 

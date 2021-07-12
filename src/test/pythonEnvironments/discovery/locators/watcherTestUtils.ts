@@ -4,6 +4,8 @@
 import { assert } from 'chai';
 import * as fs from 'fs-extra';
 import * as path from 'path';
+import * as sinon from 'sinon';
+import { DiscoveryVariants } from '../../../../client/common/experiments/groups';
 import { traceWarning } from '../../../../client/common/logger';
 import { FileChangeType } from '../../../../client/common/platform/fileSystemWatcher';
 import { createDeferred, Deferred, sleep } from '../../../../client/common/utils/async';
@@ -14,7 +16,7 @@ import { ILocator } from '../../../../client/pythonEnvironments/base/locator';
 import { getEnvs } from '../../../../client/pythonEnvironments/base/locatorUtils';
 import { PythonEnvsChangedEvent } from '../../../../client/pythonEnvironments/base/watcher';
 import { getInterpreterPathFromDir } from '../../../../client/pythonEnvironments/common/commonUtils';
-import { arePathsSame } from '../../../../client/pythonEnvironments/common/externalDependencies';
+import * as externalDeps from '../../../../client/pythonEnvironments/common/externalDependencies';
 import { deleteFiles, PYTHON_PATH } from '../../../common';
 import { TEST_TIMEOUT } from '../../../constants';
 import { run } from './envTestUtils';
@@ -26,7 +28,7 @@ import { run } from './envTestUtils';
 class Venvs {
     constructor(private readonly root: string, private readonly prefix = '.virtualenv-') {}
 
-    public async create(name: string): Promise<string> {
+    public async create(name: string): Promise<{ executable: string; envDir: string }> {
         const envName = this.resolve(name);
         const argv = [PYTHON_PATH.fileToCommandArgument(), '-m', 'virtualenv', envName];
         try {
@@ -39,22 +41,30 @@ class Venvs {
         if (!filename) {
             throw new Error(`No environment to update exists in ${dirToLookInto}`);
         }
-        return filename;
+        return { executable: filename, envDir: path.dirname(path.dirname(filename)) };
     }
 
     /**
      * Creates a dummy environment by creating a fake executable.
      * @param name environment suffix name to create
      */
-    public async createDummyEnv(name: string): Promise<string> {
+    public async createDummyEnv(
+        name: string,
+        kind: PythonEnvKind | undefined,
+    ): Promise<{ executable: string; envDir: string }> {
         const envName = this.resolve(name);
-        const filepath = path.join(this.root, envName, getOSType() === OSType.Windows ? 'python.exe' : 'python');
+        const interpreterPath = path.join(this.root, envName, getOSType() === OSType.Windows ? 'python.exe' : 'python');
+        const configPath = path.join(this.root, envName, 'pyvenv.cfg');
         try {
-            await fs.createFile(filepath);
+            await fs.createFile(interpreterPath);
+            if (kind === PythonEnvKind.Venv) {
+                await fs.createFile(configPath);
+                await fs.writeFile(configPath, 'version = 3.9.2');
+            }
         } catch (err) {
-            throw new Error(`Failed to create python executable ${filepath}, Error: ${err}`);
+            throw new Error(`Failed to create python executable ${interpreterPath}, Error: ${err}`);
         }
-        return filepath;
+        return { executable: interpreterPath, envDir: path.dirname(interpreterPath) };
     }
 
     // eslint-disable-next-line class-methods-use-this
@@ -88,10 +98,10 @@ class Venvs {
 }
 
 type locatorFactoryFuncType1 = () => Promise<ILocator & IDisposable>;
-// tslint:disable:no-any
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type locatorFactoryFuncType2 = (_: any) => Promise<ILocator & IDisposable>;
-// tslint:enable:no-any
+
 export type locatorFactoryFuncType = locatorFactoryFuncType1 & locatorFactoryFuncType2;
 
 /**
@@ -117,10 +127,18 @@ export function testLocatorWatcher(
          * to verify it. Omitting that check in those cases as we can never deterministically say when it's
          * ready to check.
          */
-        kind?: PythonEnvKind
+        kind?: PythonEnvKind;
+        /**
+         * For search based locators it is possible to verify if the environment is now being located, as it
+         * can be searched for. But for non-search based locators, for eg. which rely on running commands to
+         * get environments, it's not possible to verify it without executing actual commands, installing tools
+         * etc, so this option is useful for those locators.
+         */
+        doNotVerifyIfLocated?: boolean;
     },
 ): void {
     let locator: ILocator & IDisposable;
+    let inExperimentStub: sinon.SinonStub;
     const venvs = new Venvs(root);
 
     async function waitForChangeToBeDetected(deferred: Deferred<void>) {
@@ -133,10 +151,15 @@ export function testLocatorWatcher(
 
     async function isLocated(executable: string): Promise<boolean> {
         const items = await getEnvs(locator.iterEnvs());
-        return items.some((item) => arePathsSame(item.executable.filename, executable));
+        return items.some((item) => externalDeps.arePathsSame(item.executable.filename, executable));
     }
 
     suiteSetup(() => venvs.cleanUp());
+
+    setup(() => {
+        inExperimentStub = sinon.stub(externalDeps, 'inExperiment');
+        inExperimentStub.withArgs(DiscoveryVariants.discoverWithFileWatching).resolves(true);
+    });
 
     async function setupLocator(onChanged: (e: PythonEnvsChangedEvent) => Promise<void>) {
         locator = options?.arg ? await createLocatorFactoryFunc(options.arg) : await createLocatorFactoryFunc();
@@ -149,6 +172,7 @@ export function testLocatorWatcher(
     teardown(async () => {
         await venvs.cleanUp();
         locator.dispose();
+        inExperimentStub.restore();
     });
 
     test('Detect a new environment', async () => {
@@ -159,21 +183,28 @@ export function testLocatorWatcher(
             deferred.resolve();
         });
 
-        const executable = await venvs.create('one');
+        const { executable, envDir } = await venvs.create('one');
         await waitForChangeToBeDetected(deferred);
-        const isFound = await isLocated(executable);
+        if (!options?.doNotVerifyIfLocated) {
+            const isFound = await isLocated(executable);
+            assert.ok(isFound);
+        }
 
-        assert.ok(isFound);
         assert.equal(actualEvent!.type, FileChangeType.Created, 'Wrong event emitted');
         if (options?.kind) {
             assert.equal(actualEvent!.kind, options.kind, 'Wrong event emitted');
         }
+        assert.notEqual(actualEvent!.searchLocation, undefined, 'Wrong event emitted');
+        assert.ok(
+            externalDeps.arePathsSame(actualEvent!.searchLocation!.fsPath, path.dirname(envDir)),
+            'Wrong event emitted',
+        );
     });
 
     test('Detect when an environment has been deleted', async () => {
         let actualEvent: PythonEnvsChangedEvent;
         const deferred = createDeferred<void>();
-        const executable = await venvs.create('one');
+        const { executable, envDir } = await venvs.create('one');
         await setupLocator(async (e) => {
             if (e.type === FileChangeType.Deleted) {
                 actualEvent = e;
@@ -188,13 +219,20 @@ export function testLocatorWatcher(
         // Hence we test directly deleting the executable, and not the whole folder using `workspaceVenvs.cleanUp()`.
         await venvs.delete(executable);
         await waitForChangeToBeDetected(deferred);
-        const isFound = await isLocated(executable);
+        if (!options?.doNotVerifyIfLocated) {
+            const isFound = await isLocated(executable);
+            assert.notOk(isFound);
+        }
 
-        assert.notOk(isFound);
         assert.notEqual(actualEvent!, undefined, 'Wrong event emitted');
         if (options?.kind) {
             assert.equal(actualEvent!.kind, options.kind, 'Wrong event emitted');
         }
+        assert.notEqual(actualEvent!.searchLocation, undefined, 'Wrong event emitted');
+        assert.ok(
+            externalDeps.arePathsSame(actualEvent!.searchLocation!.fsPath, path.dirname(envDir)),
+            'Wrong event emitted',
+        );
     });
 
     test('Detect when an environment has been updated', async () => {
@@ -203,7 +241,7 @@ export function testLocatorWatcher(
         // Create a dummy environment so we can update its executable later. We can't choose a real environment here.
         // Executables inside real environments can be symlinks, so writing on them can result in the real executable
         // being updated instead of the symlink.
-        const executable = await venvs.createDummyEnv('one');
+        const { executable, envDir } = await venvs.createDummyEnv('one', options?.kind);
         await setupLocator(async (e) => {
             if (e.type === FileChangeType.Changed) {
                 actualEvent = e;
@@ -213,12 +251,14 @@ export function testLocatorWatcher(
 
         await venvs.update(executable);
         await waitForChangeToBeDetected(deferred);
-        const isFound = await isLocated(executable);
-
-        assert.ok(isFound);
-        assert.notEqual(actualEvent!, undefined, 'Wrong event emitted');
+        assert.notEqual(actualEvent!, undefined, 'Event was not emitted');
         if (options?.kind) {
-            assert.equal(actualEvent!.kind, options.kind, 'Wrong event emitted');
+            assert.equal(actualEvent!.kind, options.kind, 'Kind is not as expected');
         }
+        assert.notEqual(actualEvent!.searchLocation, undefined, 'Search location is not set');
+        assert.ok(
+            externalDeps.arePathsSame(actualEvent!.searchLocation!.fsPath, path.dirname(envDir)),
+            `Paths don't match ${actualEvent!.searchLocation!.fsPath} != ${path.dirname(envDir)}`,
+        );
     });
 }

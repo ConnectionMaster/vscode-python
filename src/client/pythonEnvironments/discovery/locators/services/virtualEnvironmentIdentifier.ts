@@ -4,15 +4,13 @@
 import * as fsapi from 'fs-extra';
 import * as path from 'path';
 import '../../../../common/extensions';
-import {
-    getEnvironmentVariable, getOSType, getUserHomeDir, OSType
-} from '../../../../common/utils/platform';
+import { getEnvironmentVariable, getOSType, getUserHomeDir, OSType } from '../../../../common/utils/platform';
 import { PythonVersion, UNKNOWN_PYTHON_VERSION } from '../../../base/info';
 import { comparePythonVersionSpecificity } from '../../../base/info/env';
-import { parseVersion, parseVersionInfo } from '../../../base/info/pythonVersion';
+import { parseBasicVersion, parseRelease, parseVersion } from '../../../base/info/pythonVersion';
 import { pathExists, readFile } from '../../../common/externalDependencies';
 
-function getPyvenvConfigPathsFrom(interpreterPath:string): string[] {
+function getPyvenvConfigPathsFrom(interpreterPath: string): string[] {
     const pyvenvConfigFile = 'pyvenv.cfg';
 
     // Check if the pyvenv.cfg file is in the parent directory relative to the interpreter.
@@ -37,7 +35,7 @@ function getPyvenvConfigPathsFrom(interpreterPath:string): string[] {
  * @param {string} interpreterPath: Absolute path to the python interpreter.
  * @returns {boolean} : Returns true if the interpreter belongs to a venv environment.
  */
-export async function isVenvEnvironment(interpreterPath:string): Promise<boolean> {
+export async function isVenvEnvironment(interpreterPath: string): Promise<boolean> {
     const venvPaths = getPyvenvConfigPathsFrom(interpreterPath);
 
     // We don't need to test all at once, testing each one here
@@ -54,7 +52,7 @@ export async function isVenvEnvironment(interpreterPath:string): Promise<boolean
  * @param {string} interpreterPath: Absolute path to the python interpreter.
  * @returns {boolean} : Returns true if the interpreter belongs to a virtualenv environment.
  */
-export async function isVirtualenvEnvironment(interpreterPath:string): Promise<boolean> {
+export async function isVirtualenvEnvironment(interpreterPath: string): Promise<boolean> {
     // Check if there are any activate.* files in the same directory as the interpreter.
     //
     // env
@@ -99,7 +97,7 @@ function getWorkOnHome(): Promise<string> {
  * @param {string} interpreterPath: Absolute path to the python interpreter.
  * @returns {boolean}: Returns true if the interpreter belongs to a virtualenvWrapper environment.
  */
-export async function isVirtualenvwrapperEnvironment(interpreterPath:string): Promise<boolean> {
+export async function isVirtualenvwrapperEnvironment(interpreterPath: string): Promise<boolean> {
     const workOnHomeDir = await getWorkOnHome();
     let pathToCheck = interpreterPath;
     let workOnRoot = workOnHomeDir;
@@ -112,9 +110,11 @@ export async function isVirtualenvwrapperEnvironment(interpreterPath:string): Pr
     // For environment to be a virtualenvwrapper based it has to follow these two rules:
     // 1. It should be in a sub-directory under the WORKON_HOME
     // 2. It should be a valid virtualenv environment
-    return await pathExists(workOnHomeDir)
-        && pathToCheck.startsWith(`${workOnRoot}${path.sep}`)
-        && isVirtualenvEnvironment(interpreterPath);
+    return (
+        (await pathExists(workOnHomeDir)) &&
+        pathToCheck.startsWith(`${workOnRoot}${path.sep}`) &&
+        isVirtualenvEnvironment(interpreterPath)
+    );
 }
 
 /**
@@ -125,7 +125,7 @@ export async function isVirtualenvwrapperEnvironment(interpreterPath:string): Pr
  * Reads the pyvenv.cfg and finds the line that looks like 'version = 3.9.0`. Gets the
  * version string from that lines and parses it.
  */
-export async function getPythonVersionFromPyvenvCfg(interpreterPath:string): Promise<PythonVersion> {
+export async function getPythonVersionFromPyvenvCfg(interpreterPath: string): Promise<PythonVersion> {
     const configPaths = getPyvenvConfigPathsFrom(interpreterPath);
     let version = UNKNOWN_PYTHON_VERSION;
 
@@ -176,5 +176,34 @@ export async function getPythonVersionFromPyvenvCfg(interpreterPath:string): Pro
         }
     }
 
+    return version;
+}
+
+/**
+ * Convert the given string into the corresponding Python version object.
+ * Example:
+ *   3.9.0.final.0
+ *   3.9.0.alpha.1
+ *   3.9.0.beta.2
+ *   3.9.0.candidate.1
+ *
+ * Does not parse:
+ *   3.9.0
+ *   3.9.0a1
+ *   3.9.0b2
+ *   3.9.0rc1
+ */
+function parseVersionInfo(versionInfoStr: string): PythonVersion {
+    let version: PythonVersion;
+    let after: string;
+    try {
+        [version, after] = parseBasicVersion(versionInfoStr);
+    } catch {
+        // XXX Use getEmptyVersion().
+        return UNKNOWN_PYTHON_VERSION;
+    }
+    if (version.micro !== -1 && after.startsWith('.')) {
+        [version.release] = parseRelease(after);
+    }
     return version;
 }

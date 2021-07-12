@@ -3,7 +3,7 @@
 import '../../common/extensions';
 
 import { inject, injectable } from 'inversify';
-import { Disposable, LanguageClient, LanguageClientOptions } from 'vscode-languageclient/node';
+import { Disposable, LanguageClient, LanguageClientOptions, State } from 'vscode-languageclient/node';
 
 import { traceDecorators, traceError } from '../../common/logger';
 import { IConfigurationService, Resource } from '../../common/types';
@@ -14,7 +14,7 @@ import { LanguageServerSymbolProvider } from '../../providers/symbolProvider';
 import { PythonEnvironment } from '../../pythonEnvironments/info';
 import { captureTelemetry, sendTelemetryEvent } from '../../telemetry';
 import { EventName } from '../../telemetry/constants';
-import { ITestManagementService } from '../../testing/types';
+import { ITestingService } from '../../testing/types';
 import { ProgressReporting } from '../progress';
 import { ILanguageClientFactory, ILanguageServerProxy } from '../types';
 
@@ -28,8 +28,8 @@ export class DotNetLanguageServerProxy implements ILanguageServerProxy {
 
     constructor(
         @inject(ILanguageClientFactory) private readonly factory: ILanguageClientFactory,
-        @inject(ITestManagementService) private readonly testManager: ITestManagementService,
-        @inject(IConfigurationService) private readonly configurationService: IConfigurationService
+        @inject(ITestingService) private readonly testManager: ITestingService,
+        @inject(IConfigurationService) private readonly configurationService: IConfigurationService,
     ) {
         this.startupCompleted = createDeferred<void>();
     }
@@ -56,31 +56,28 @@ export class DotNetLanguageServerProxy implements ILanguageServerProxy {
     public async start(
         resource: Resource,
         interpreter: PythonEnvironment | undefined,
-        options: LanguageClientOptions
+        options: LanguageClientOptions,
     ): Promise<void> {
         if (!this.languageClient) {
             this.languageClient = await this.factory.createLanguageClient(resource, interpreter, options);
-            this.disposables.push(this.languageClient!.start());
+
+            this.languageClient.onDidChangeState((e) => {
+                // The client's on* methods must be called after the client has started, but if called too
+                // late the server may have already sent a message (which leads to failures). Register
+                // these on the state change to running to ensure they are ready soon enough.
+                if (e.newState === State.Running) {
+                    this.registerHandlers(resource);
+                }
+            });
+
+            this.disposables.push(this.languageClient.start());
             await this.serverReady();
+
             if (this.disposed) {
                 // Check if it got disposed in the interim.
                 return;
             }
-            const progressReporting = new ProgressReporting(this.languageClient!);
-            this.disposables.push(progressReporting);
 
-            const settings = this.configurationService.getSettings(resource);
-            if (settings.downloadLanguageServer) {
-                this.languageClient.onTelemetry((telemetryEvent) => {
-                    const eventName = telemetryEvent.EventName || EventName.PYTHON_LANGUAGE_SERVER_TELEMETRY;
-                    const formattedProperties = {
-                        ...telemetryEvent.Properties,
-                        // Replace all slashes in the method name so it doesn't get scrubbed by vscode-extension-telemetry.
-                        method: telemetryEvent.Properties.method?.replace(/\//g, '.')
-                    };
-                    sendTelemetryEvent(eventName, telemetryEvent.Measurements, formattedProperties);
-                });
-            }
             await this.registerTestServices();
         } else {
             await this.startupCompleted.promise;
@@ -95,8 +92,8 @@ export class DotNetLanguageServerProxy implements ILanguageServerProxy {
         this.startupCompleted.promise
             .then(() =>
                 this.languageClient!.sendRequest('python/loadExtension', args).then(noop, (ex) =>
-                    traceError('Request python/loadExtension failed', ex)
-                )
+                    traceError('Request python/loadExtension failed', ex),
+                ),
             )
             .ignoreErrors();
     }
@@ -117,5 +114,28 @@ export class DotNetLanguageServerProxy implements ILanguageServerProxy {
             throw new Error('languageClient not initialized');
         }
         await this.testManager.activate(new LanguageServerSymbolProvider(this.languageClient!));
+    }
+
+    private registerHandlers(resource: Resource) {
+        if (this.disposed) {
+            // Check if it got disposed in the interim.
+            return;
+        }
+
+        const progressReporting = new ProgressReporting(this.languageClient!);
+        this.disposables.push(progressReporting);
+
+        const settings = this.configurationService.getSettings(resource);
+        if (settings.downloadLanguageServer) {
+            this.languageClient!.onTelemetry((telemetryEvent) => {
+                const eventName = telemetryEvent.EventName || EventName.PYTHON_LANGUAGE_SERVER_TELEMETRY;
+                const formattedProperties = {
+                    ...telemetryEvent.Properties,
+                    // Replace all slashes in the method name so it doesn't get scrubbed by vscode-extension-telemetry.
+                    method: telemetryEvent.Properties.method?.replace(/\//g, '.'),
+                };
+                sendTelemetryEvent(eventName, telemetryEvent.Measurements, formattedProperties);
+            });
+        }
     }
 }

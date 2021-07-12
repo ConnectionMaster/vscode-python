@@ -2,13 +2,10 @@
 // Licensed under the MIT License.
 
 import * as path from 'path';
-import { EXTENSION_ROOT_DIR } from '../../../constants';
+import { _SCRIPTS_DIR } from './constants';
+import { CompletionResponse, SymbolProviderSymbols } from './types';
 
-// It is simpler to hard-code it instead of using vscode.ExtensionContext.extensionPath.
-export const _SCRIPTS_DIR = path.join(EXTENSION_ROOT_DIR, 'pythonFiles');
 const SCRIPTS_DIR = _SCRIPTS_DIR;
-export const _ISOLATED = path.join(_SCRIPTS_DIR, 'pyvsc-run-isolated.py');
-const ISOLATED = _ISOLATED;
 
 // "scripts" contains everything relevant to the scripts found under
 // the top-level "pythonFiles" directory.  Each of those scripts has
@@ -32,10 +29,8 @@ const ISOLATED = _ISOLATED;
 //
 // ignored scripts:
 //  * install_debugpy.py  (used only for extension development)
+export * as testingTools from './testing_tools';
 
-export * as testing_tools from './testing_tools';
-
-//============================
 // interpreterInfo.py
 
 type ReleaseLevel = 'alpha' | 'beta' | 'candidate' | 'final';
@@ -49,7 +44,7 @@ export type InterpreterInfoJson = {
 
 export function interpreterInfo(): [string[], (out: string) => InterpreterInfoJson] {
     const script = path.join(SCRIPTS_DIR, 'interpreterInfo.py');
-    const args = [ISOLATED, script];
+    const args = [script];
 
     function parse(out: string): InterpreterInfoJson {
         let json: InterpreterInfoJson;
@@ -64,120 +59,28 @@ export function interpreterInfo(): [string[], (out: string) => InterpreterInfoJs
     return [args, parse];
 }
 
-//============================
 // completion.py
 
-namespace _completion {
-    export type Response = (_Response1 | _Response2) & {
-        id: number;
-    };
-    type _Response1 = {
-        // tslint:disable-next-line:no-any no-banned-terms
-        arguments: any[];
-    };
-    type _Response2 =
-        | CompletionResponse
-        | HoverResponse
-        | DefinitionResponse
-        | ReferenceResponse
-        | SymbolResponse
-        | ArgumentsResponse;
-
-    type CompletionResponse = {
-        results: AutoCompleteItem[];
-    };
-    type HoverResponse = {
-        results: HoverItem[];
-    };
-    type DefinitionResponse = {
-        results: Definition[];
-    };
-    type ReferenceResponse = {
-        results: Reference[];
-    };
-    type SymbolResponse = {
-        results: Definition[];
-    };
-    type ArgumentsResponse = {
-        results: Signature[];
-    };
-
-    type Signature = {
-        name: string;
-        docstring: string;
-        description: string;
-        paramindex: number;
-        params: Argument[];
-    };
-    type Argument = {
-        name: string;
-        value: string;
-        docstring: string;
-        description: string;
-    };
-
-    type Reference = {
-        name: string;
-        fileName: string;
-        columnIndex: number;
-        lineIndex: number;
-        moduleName: string;
-    };
-
-    type AutoCompleteItem = {
-        type: string;
-        kind: string;
-        text: string;
-        description: string;
-        raw_docstring: string;
-        rightLabel: string;
-    };
-
-    type DefinitionRange = {
-        startLine: number;
-        startColumn: number;
-        endLine: number;
-        endColumn: number;
-    };
-    type Definition = {
-        type: string;
-        kind: string;
-        text: string;
-        fileName: string;
-        container: string;
-        range: DefinitionRange;
-    };
-
-    type HoverItem = {
-        kind: string;
-        text: string;
-        description: string;
-        docstring: string;
-        signature: string;
-    };
-}
-
-export function completion(jediPath?: string): [string[], (out: string) => _completion.Response[]] {
+export function completion(jediPath?: string): [string[], (out: string) => CompletionResponse[]] {
     const script = path.join(SCRIPTS_DIR, 'completion.py');
-    const args = [ISOLATED, script];
+    const args = [script];
     if (jediPath) {
         args.push('custom');
         args.push(jediPath);
     }
 
-    function parse(out: string): _completion.Response[] {
+    function parse(out: string): CompletionResponse[] {
         return out.splitLines().map((resp) => JSON.parse(resp));
     }
 
     return [args, parse];
 }
 
-//============================
 // sortImports.py
 
 export function sortImports(filename: string, sortArgs?: string[]): [string[], (out: string) => string] {
     const script = path.join(SCRIPTS_DIR, 'sortImports.py');
-    const args = [ISOLATED, script, filename, '--diff'];
+    const args = [script, filename, '--diff'];
     if (sortArgs) {
         args.push(...sortArgs);
     }
@@ -190,18 +93,15 @@ export function sortImports(filename: string, sortArgs?: string[]): [string[], (
     return [args, parse];
 }
 
-//============================
 // refactor.py
 
-export function refactor(root: string): [string[], (out: string) => object[]] {
+export function refactor(root: string): [string[], (out: string) => Record<string, unknown>[]] {
     const script = path.join(SCRIPTS_DIR, 'refactor.py');
-    const args = [ISOLATED, script, root];
+    const args = [script, root];
 
-    // tslint:disable-next-line:no-suspicious-comment
     // TODO: Make the return type more specific, like we did
     // with completion().
-    function parse(out: string): object[] {
-        // tslint:disable-next-line:no-suspicious-comment
+    function parse(out: string): Record<string, unknown>[] {
         // TODO: Also handle "STARTED"?
         return out
             .split(/\r?\n/g)
@@ -212,27 +112,11 @@ export function refactor(root: string): [string[], (out: string) => object[]] {
     return [args, parse];
 }
 
-//============================
-// normalizeForInterpreter.py
-
-export function normalizeForInterpreter(): [string[], (out: string) => string] {
-    const script = path.join(SCRIPTS_DIR, 'normalizeForInterpreter.py');
-    const args = [ISOLATED, script];
-
-    function parse(out: string) {
-        // The text will be used as-is.
-        return out;
-    }
-
-    return [args, parse];
-}
-
-//============================
 // normalizeSelection.py
 
 export function normalizeSelection(): [string[], (out: string) => string] {
     const script = path.join(SCRIPTS_DIR, 'normalizeSelection.py');
-    const args = [ISOLATED, script];
+    const args = [script];
 
     function parse(out: string) {
         // The text will be used as-is.
@@ -242,54 +126,31 @@ export function normalizeSelection(): [string[], (out: string) => string] {
     return [args, parse];
 }
 
-//============================
 // symbolProvider.py
-
-namespace _symbolProvider {
-    type Position = {
-        line: number;
-        character: number;
-    };
-    type RawSymbol = {
-        // If no namespace then ''.
-        namespace: string;
-        name: string;
-        range: {
-            start: Position;
-            end: Position;
-        };
-    };
-    export type Symbols = {
-        classes: RawSymbol[];
-        methods: RawSymbol[];
-        functions: RawSymbol[];
-    };
-}
 
 export function symbolProvider(
     filename: string,
     // If "text" is provided then it gets passed to the script as-is.
-    text?: string
-): [string[], (out: string) => _symbolProvider.Symbols] {
+    text?: string,
+): [string[], (out: string) => SymbolProviderSymbols] {
     const script = path.join(SCRIPTS_DIR, 'symbolProvider.py');
-    const args = [ISOLATED, script, filename];
+    const args = [script, filename];
     if (text) {
         args.push(text);
     }
 
-    function parse(out: string): _symbolProvider.Symbols {
+    function parse(out: string): SymbolProviderSymbols {
         return JSON.parse(out);
     }
 
     return [args, parse];
 }
 
-//============================
 // printEnvVariables.py
 
 export function printEnvVariables(): [string[], (out: string) => NodeJS.ProcessEnv] {
     const script = path.join(SCRIPTS_DIR, 'printEnvVariables.py').fileToCommandArgument();
-    const args = [ISOLATED, script];
+    const args = [script];
 
     function parse(out: string): NodeJS.ProcessEnv {
         return JSON.parse(out);
@@ -298,60 +159,43 @@ export function printEnvVariables(): [string[], (out: string) => NodeJS.ProcessE
     return [args, parse];
 }
 
-//============================
-// printEnvVariablesToFile.py
-
-export function printEnvVariablesToFile(filename: string): [string[], (out: string) => NodeJS.ProcessEnv] {
-    const script = path.join(SCRIPTS_DIR, 'printEnvVariablesToFile.py');
-    const args = [ISOLATED, script, filename.fileToCommandArgument()];
-
-    function parse(out: string): NodeJS.ProcessEnv {
-        return JSON.parse(out);
-    }
-
-    return [args, parse];
-}
-
-//============================
 // shell_exec.py
 
+// eslint-disable-next-line camelcase
 export function shell_exec(command: string, lockfile: string, shellArgs: string[]): string[] {
     const script = path.join(SCRIPTS_DIR, 'shell_exec.py');
     // We don't bother with a "parse" function since the output
     // could be anything.
     return [
-        ISOLATED,
         script,
         command.fileToCommandArgument(),
         // The shell args must come after the command
         // but before the lockfile.
         ...shellArgs,
-        lockfile.fileToCommandArgument()
+        lockfile.fileToCommandArgument(),
     ];
 }
 
-//============================
 // testlauncher.py
 
 export function testlauncher(testArgs: string[]): string[] {
     const script = path.join(SCRIPTS_DIR, 'testlauncher.py');
     // There is no output to parse, so we do not return a function.
-    return [ISOLATED, script, ...testArgs];
+    return [script, ...testArgs];
 }
 
-//============================
 // visualstudio_py_testlauncher.py
 
+// eslint-disable-next-line camelcase
 export function visualstudio_py_testlauncher(testArgs: string[]): string[] {
     const script = path.join(SCRIPTS_DIR, 'visualstudio_py_testlauncher.py');
     // There is no output to parse, so we do not return a function.
     return [script, ...testArgs];
 }
 
-//============================
 // tensorboard_launcher.py
 
-export function tensorboardLauncher(args: string[]) {
+export function tensorboardLauncher(args: string[]): string[] {
     const script = path.join(SCRIPTS_DIR, 'tensorboard_launcher.py');
-    return [ISOLATED, script, ...args];
+    return [script, ...args];
 }

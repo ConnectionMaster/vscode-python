@@ -4,17 +4,31 @@
 import { uniqBy } from 'lodash';
 import * as path from 'path';
 import { traceError, traceVerbose } from '../../common/logger';
-import { HKCU, HKLM, IRegistryKey, IRegistryValue, readRegistryKeys, readRegistryValues, REG_SZ } from './windowsRegistry';
+import {
+    HKCU,
+    HKLM,
+    IRegistryKey,
+    IRegistryValue,
+    readRegistryKeys,
+    readRegistryValues,
+    REG_SZ,
+} from './windowsRegistry';
 
-// tslint:disable-next-line: no-single-line-block-comment
 /* eslint-disable global-require */
+
+/**
+ * Determine if the given filename looks like the simplest Python executable.
+ */
+export function matchBasicPythonBinFilename(filename: string): boolean {
+    return path.basename(filename).toLowerCase() === 'python.exe';
+}
 
 /**
  * Checks if a given path ends with python*.exe
  * @param {string} interpreterPath : Path to python interpreter.
  * @returns {boolean} : Returns true if the path matches pattern for windows python executable.
  */
-export function isWindowsPythonExe(interpreterPath: string): boolean {
+export function matchPythonBinFilename(filename: string): boolean {
     /**
      * This Reg-ex matches following file names:
      * python.exe
@@ -24,7 +38,7 @@ export function isWindowsPythonExe(interpreterPath: string): boolean {
      */
     const windowsPythonExes = /^python(\d+(.\d+)?)?\.exe$/;
 
-    return windowsPythonExes.test(path.basename(interpreterPath));
+    return windowsPythonExes.test(path.basename(filename));
 }
 
 export interface IRegistryInterpreterData {
@@ -32,7 +46,7 @@ export interface IRegistryInterpreterData {
     versionStr?: string;
     sysVersionStr?: string;
     bitnessStr?: string;
-    displayName?: string;
+    companyDisplayName?: string;
     distroOrgName?: string;
 }
 
@@ -58,7 +72,7 @@ async function getInterpreterDataFromKey(
                 result.versionStr = value.value;
                 break;
             case 'DisplayName':
-                result.displayName = value.value;
+                result.companyDisplayName = value.value;
                 break;
             default:
                 break;

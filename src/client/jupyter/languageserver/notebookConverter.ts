@@ -13,8 +13,9 @@ import {
     Disposable,
     DocumentHighlight,
     DocumentLink,
-    DocumentSelector,
     DocumentSymbol,
+    Event,
+    EventEmitter,
     Hover,
     Location,
     LocationLink,
@@ -26,11 +27,13 @@ import {
     TextDocumentContentChangeEvent,
     TextEdit,
     Uri,
-    WorkspaceEdit
+    WorkspaceEdit,
 } from 'vscode';
-import { NotebookCell, NotebookConcatTextDocument, NotebookDocument } from 'vscode-proposed';
+import { NotebookDocument } from 'vscode-proposed';
 import { IVSCodeNotebook } from '../../common/application/types';
+import { InteractiveInputScheme, InteractiveScheme, NotebookCellScheme } from '../../common/constants';
 import { IFileSystem } from '../../common/platform/types';
+import { IConcatTextDocument } from './concatTextDocument';
 import { NotebookConcatDocument } from './notebookConcatDocument';
 
 /* Used by code actions. Disabled for now.
@@ -44,15 +47,27 @@ function toPosition(positionLike: Position): Position {
 */
 
 export class NotebookConverter implements Disposable {
+    public get onDidChangeCells(): Event<TextDocumentChangeEvent> {
+        return this.onDidChangeCellsEmitter.event;
+    }
+
     private activeDocuments: Map<string, NotebookConcatDocument> = new Map<string, NotebookConcatDocument>();
+
+    private pendingCloseDocuments: Map<string, NotebookConcatDocument> = new Map<string, NotebookConcatDocument>();
+
     private activeDocumentsOutgoingMap: Map<string, NotebookConcatDocument> = new Map<string, NotebookConcatDocument>();
+
     private disposables: Disposable[] = [];
+
+    private onDidChangeCellsEmitter = new EventEmitter<TextDocumentChangeEvent>();
+
+    private mapOfConcatDocumentsWithCellUris = new Map<string, string[]>();
 
     constructor(
         private api: IVSCodeNotebook,
         private fs: IFileSystem,
-        private cellSelector: DocumentSelector,
-        private notebookFilter: RegExp
+        private cellSelector: string,
+        private notebookFilter: RegExp,
     ) {
         this.disposables.push(api.onDidOpenNotebookDocument(this.onDidOpenNotebook.bind(this)));
         this.disposables.push(api.onDidCloseNotebookDocument(this.onDidCloseNotebook.bind(this)));
@@ -61,42 +76,70 @@ export class NotebookConverter implements Disposable {
         api.notebookDocuments.forEach(this.onDidOpenNotebook.bind(this));
     }
 
-    public dispose() {
+    private static getDocumentKey(uri: Uri): string {
+        if (uri.scheme === InteractiveInputScheme) {
+            // input
+            const counter = /InteractiveInput-(\d+)/.exec(uri.path);
+            if (counter && counter[1]) {
+                return `Interactive-${counter[1]}.interactive`;
+            }
+        }
+
+        if (uri.scheme === InteractiveScheme) {
+            return uri.path;
+        }
+
+        // Use the path of the doc uri. It should be the same for all cells
+        if (os.platform() === 'win32') {
+            return uri.fsPath.toLowerCase();
+        }
+        return uri.fsPath;
+    }
+
+    public dispose(): void {
         this.disposables.forEach((d) => d.dispose());
     }
 
-    public hasCell(cell: TextDocument) {
+    public hasCell(cell: TextDocument): boolean {
         const concat = this.getConcatDocument(cell);
-        return concat && concat.contains(cell.uri);
+        return concat?.contains(cell.uri) ?? false;
     }
 
-    public hasFiredOpen(cell: TextDocument) {
+    public hasFiredOpen(cell: TextDocument): boolean | undefined {
         const wrapper = this.getTextDocumentWrapper(cell);
         if (wrapper) {
             return wrapper.firedOpen;
         }
+        return undefined;
     }
 
-    public firedOpen(cell: TextDocument) {
+    public firedOpen(cell: TextDocument): void {
         const wrapper = this.getTextDocumentWrapper(cell);
         if (wrapper) {
             wrapper.firedOpen = true;
         }
     }
 
-    public hasFiredClose(cell: TextDocument) {
-        const wrapper = this.getTextDocumentWrapper(cell);
-        if (wrapper) {
-            return wrapper.firedClose;
-        }
-    }
+    public firedClose(document: TextDocument): TextDocument | undefined {
+        const key = NotebookConverter.getDocumentKey(document.uri);
+        let concatDocument = this.activeDocuments.get(key);
 
-    public firedClose(cell: TextDocument) {
-        const wrapper = this.getTextDocumentWrapper(cell);
-        if (wrapper) {
-            wrapper.firedClose = true;
-            wrapper.firedOpen = false;
+        // concat document not closed yet
+        // mark the cell is closed (which contains `document`)
+        // when all cells are closed, we should return the concatDocument, so the language server will close it and clear diagnostics
+        if (concatDocument && concatDocument.isComposeDocumentsAllClosed) {
+            return concatDocument;
         }
+
+        concatDocument = this.pendingCloseDocuments.get(key);
+
+        if (concatDocument) {
+            // the document will not be closed, remove it from cache
+            this.pendingCloseDocuments.delete(key);
+            return concatDocument;
+        }
+
+        return undefined;
     }
 
     public toIncomingDiagnosticsMap(uri: Uri, diagnostics: Diagnostic[]): Map<Uri, Diagnostic[]> {
@@ -106,9 +149,18 @@ export class NotebookConverter implements Disposable {
         if (wrapper) {
             // Diagnostics are supposed to be per file and are updated each time
             // Make sure to clear out old ones first
-            wrapper.notebook.cells.forEach((c: NotebookCell) => {
-                result.set(c.uri, []);
+            const cellUris: string[] = [];
+            const oldCellUris = this.mapOfConcatDocumentsWithCellUris.get(uri.toString()) || [];
+            wrapper.concatDocument.getComposeDocuments().forEach((document: TextDocument) => {
+                result.set(document.uri, []);
+                cellUris.push(document.uri.toString());
             });
+            // Possible some cells were deleted, we need to clear the diagnostics of those cells as well.
+            const currentCellUris = new Set(cellUris);
+            oldCellUris
+                .filter((cellUri) => !currentCellUris.has(cellUri))
+                .forEach((cellUri) => result.set(Uri.parse(cellUri), []));
+            this.mapOfConcatDocumentsWithCellUris.set(uri.toString(), cellUris);
 
             // Then for all the new ones, set their values.
             diagnostics.forEach((d) => {
@@ -120,6 +172,11 @@ export class NotebookConverter implements Disposable {
                 }
                 list.push(this.toIncomingDiagnostic(location.uri, d));
             });
+        } else if (this.mapOfConcatDocumentsWithCellUris.has(uri.toString())) {
+            (this.mapOfConcatDocumentsWithCellUris.get(uri.toString()) || [])
+                .map((cellUri) => Uri.parse(cellUri))
+                .forEach((cellUri) => result.set(cellUri, []));
+            this.mapOfConcatDocumentsWithCellUris.delete(uri.toString());
         } else {
             result.set(uri, diagnostics);
         }
@@ -127,21 +184,22 @@ export class NotebookConverter implements Disposable {
         return result;
     }
 
+    // eslint-disable-next-line @typescript-eslint/explicit-module-boundary-types
     public toIncomingWorkspaceSymbols(symbols: SymbolInformation[] | null | undefined) {
         if (Array.isArray(symbols)) {
             return symbols.map(this.toIncomingWorkspaceSymbol.bind(this));
         }
-        return symbols;
+        return symbols ?? undefined;
     }
 
-    public toIncomingWorkspaceEdit(workspaceEdit: WorkspaceEdit | null | undefined) {
+    public toIncomingWorkspaceEdit(workspaceEdit: WorkspaceEdit | null | undefined): WorkspaceEdit | undefined {
         if (workspaceEdit) {
             // Translate all of the text edits into a URI map
             const translated = new Map<Uri, TextEdit[]>();
             workspaceEdit.entries().forEach(([key, values]) => {
                 values.forEach((e) => {
                     // Location may move this edit to a different cell.
-                    const location = this.toIncomingLocation(key, e.range);
+                    const location = this.toIncomingLocationFromRange(key, e.range);
 
                     // Save this in the entry
                     let list = translated.get(location.uri);
@@ -151,7 +209,7 @@ export class NotebookConverter implements Disposable {
                     }
                     list.push({
                         ...e,
-                        range: location.range
+                        range: location.range,
                     });
                 });
             });
@@ -161,12 +219,12 @@ export class NotebookConverter implements Disposable {
             translated.forEach((v, k) => newWorkspaceEdit.set(k, v));
             return newWorkspaceEdit;
         }
-        return workspaceEdit;
+        return workspaceEdit ?? undefined;
     }
 
     public toOutgoingDocument(cell: TextDocument): TextDocument {
         const result = this.getTextDocumentWrapper(cell);
-        return result ? result : cell;
+        return result || cell;
     }
 
     public toOutgoingUri(cell: TextDocument | Uri): Uri {
@@ -175,16 +233,17 @@ export class NotebookConverter implements Disposable {
         return result ? result.uri : uri;
     }
 
+    // eslint-disable-next-line @typescript-eslint/explicit-module-boundary-types
     public toOutgoingChangeEvent(cellEvent: TextDocumentChangeEvent) {
         return {
             document: this.toOutgoingDocument(cellEvent.document),
             contentChanges: cellEvent.contentChanges.map(
-                this.toOutgoingContentChangeEvent.bind(this, cellEvent.document)
-            )
+                this.toOutgoingContentChangeEvent.bind(this, cellEvent.document),
+            ),
         };
     }
 
-    public toOutgoingPosition(cell: TextDocument, position: Position) {
+    public toOutgoingPosition(cell: TextDocument, position: Position): Position {
         const concat = this.getConcatDocument(cell);
         return concat ? concat.positionAt(new Location(cell.uri, position)) : position;
     }
@@ -199,7 +258,7 @@ export class NotebookConverter implements Disposable {
         return cellRange;
     }
 
-    public toOutgoingOffset(cell: TextDocument, offset: number) {
+    public toOutgoingOffset(cell: TextDocument, offset: number): number {
         const concat = this.getConcatDocument(cell);
         if (concat) {
             const position = cell.positionAt(offset);
@@ -212,76 +271,77 @@ export class NotebookConverter implements Disposable {
     public toOutgoingContext(cell: TextDocument, context: CodeActionContext): CodeActionContext {
         return {
             ...context,
-            diagnostics: context.diagnostics.map(this.toOutgoingDiagnostic.bind(this, cell))
+            diagnostics: context.diagnostics.map(this.toOutgoingDiagnostic.bind(this, cell)),
         };
     }
 
-    public toIncomingHover(cell: TextDocument, hover: Hover | null | undefined) {
+    public toIncomingHover(cell: TextDocument, hover: Hover | null | undefined): Hover | undefined {
         if (hover && hover.range) {
             return {
                 ...hover,
-                range: this.toIncomingRange(cell, hover.range)
+                range: this.toIncomingRange(cell, hover.range),
             };
         }
-        return hover;
+        return hover ?? undefined;
     }
+
+    // eslint-disable-next-line @typescript-eslint/explicit-module-boundary-types
     public toIncomingCompletions(
         cell: TextDocument,
-        completions: CompletionItem[] | CompletionList | null | undefined
+        completions: CompletionItem[] | CompletionList | null | undefined,
     ) {
         if (completions) {
             if (Array.isArray(completions)) {
                 return completions.map(this.toIncomingCompletion.bind(this, cell));
-            } else {
-                return {
-                    ...completions,
-                    items: completions.items.map(this.toIncomingCompletion.bind(this, cell))
-                };
             }
+            return {
+                ...completions,
+                items: completions.items.map(this.toIncomingCompletion.bind(this, cell)),
+            };
         }
         return completions;
     }
 
-    public toIncomingLocations(
-        cell: TextDocument,
-        location: Location | Location[] | LocationLink[] | null | undefined
-    ) {
+    // eslint-disable-next-line @typescript-eslint/explicit-module-boundary-types
+    public toIncomingLocations(location: Location | Location[] | LocationLink[] | null | undefined) {
         if (Array.isArray(location)) {
-            // tslint:disable-next-line: no-any
-            return (<any>location).map(this.toIncomingLocationFromLink.bind(this, cell));
-        } else if (location?.range) {
-            return this.toIncomingLocation(location.uri, location.range);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            return (<any>location).map(this.toIncomingLocationOrLink.bind(this));
+        }
+        if (location?.range) {
+            return this.toIncomingLocationFromRange(location.uri, location.range);
         }
         return location;
     }
 
-    public toIncomingHighlight(cell: TextDocument, highlight: DocumentHighlight[] | null | undefined) {
+    public toIncomingHighlight(
+        cell: TextDocument,
+        highlight: DocumentHighlight[] | null | undefined,
+    ): DocumentHighlight[] | undefined {
         if (highlight) {
-            return highlight.map((h) => {
-                return {
-                    ...h,
-                    range: this.toIncomingRange(cell, h.range)
-                };
-            });
+            return highlight.map((h) => ({
+                ...h,
+                range: this.toIncomingRange(cell, h.range),
+            }));
         }
-        return highlight;
+        return highlight ?? undefined;
     }
 
+    // eslint-disable-next-line @typescript-eslint/explicit-module-boundary-types
     public toIncomingSymbols(cell: TextDocument, symbols: SymbolInformation[] | DocumentSymbol[] | null | undefined) {
         if (symbols && Array.isArray(symbols) && symbols.length) {
             if (symbols[0] instanceof DocumentSymbol) {
                 return (<DocumentSymbol[]>symbols).map(this.toIncomingSymbolFromDocumentSymbol.bind(this, cell));
-            } else {
-                return (<SymbolInformation[]>symbols).map(this.toIncomingSymbolFromSymbolInformation.bind(this, cell));
             }
+            return (<SymbolInformation[]>symbols).map(this.toIncomingSymbolFromSymbolInformation.bind(this, cell));
         }
-        return symbols;
+        return symbols ?? undefined;
     }
 
     public toIncomingSymbolFromSymbolInformation(cell: TextDocument, symbol: SymbolInformation): SymbolInformation {
         return {
             ...symbol,
-            location: this.toIncomingLocation(cell, symbol.location.range)
+            location: this.toIncomingLocationFromRange(cell, symbol.location.range),
         };
     }
 
@@ -291,11 +351,12 @@ export class NotebookConverter implements Disposable {
             range: this.toIncomingRange(cell, diagnostic.range),
             relatedInformation: diagnostic.relatedInformation
                 ? diagnostic.relatedInformation.map(this.toIncomingRelatedInformation.bind(this, cell))
-                : undefined
+                : undefined,
         };
     }
 
-    public toIncomingActions(_cell: TextDocument, actions: (Command | CodeAction)[] | null | undefined) {
+    // eslint-disable-next-line class-methods-use-this
+    public toIncomingActions(_cell: TextDocument, actions: (Command | CodeAction)[] | null | undefined): undefined {
         if (Array.isArray(actions)) {
             // Disable for now because actions are handled directly by the LS sometimes (at least in pylance)
             // If we translate or use them they will either
@@ -303,31 +364,27 @@ export class NotebookConverter implements Disposable {
             // 2) Crash (pylance is doing this now)
             return undefined;
         }
-        return actions;
+        return actions ?? undefined;
     }
 
-    public toIncomingCodeLenses(cell: TextDocument, lenses: CodeLens[] | null | undefined) {
+    public toIncomingCodeLenses(cell: TextDocument, lenses: CodeLens[] | null | undefined): CodeLens[] | undefined {
         if (Array.isArray(lenses)) {
-            return lenses.map((c) => {
-                return {
-                    ...c,
-                    range: this.toIncomingRange(cell, c.range)
-                };
-            });
+            return lenses.map((c) => ({
+                ...c,
+                range: this.toIncomingRange(cell, c.range),
+            }));
         }
-        return lenses;
+        return lenses ?? undefined;
     }
 
-    public toIncomingEdits(cell: TextDocument, edits: TextEdit[] | null | undefined) {
+    public toIncomingEdits(cell: TextDocument, edits: TextEdit[] | null | undefined): TextEdit[] | undefined {
         if (Array.isArray(edits)) {
-            return edits.map((e) => {
-                return {
-                    ...e,
-                    range: this.toIncomingRange(cell, e.range)
-                };
-            });
+            return edits.map((e) => ({
+                ...e,
+                range: this.toIncomingRange(cell, e.range),
+            }));
         }
-        return edits;
+        return edits ?? undefined;
     }
 
     public toIncomingRename(
@@ -339,59 +396,68 @@ export class NotebookConverter implements Disposable {
                   placeholder: string;
               }
             | null
-            | undefined
-    ) {
+            | undefined,
+    ):
+        | Range
+        | {
+              range: Range;
+              placeholder: string;
+          }
+        | undefined {
         if (rangeOrRename) {
             if (rangeOrRename instanceof Range) {
-                return this.toIncomingLocation(cell, rangeOrRename).range;
-            } else {
-                return {
-                    ...rangeOrRename,
-                    range: this.toIncomingLocation(cell, rangeOrRename.range).range
-                };
+                return this.toIncomingLocationFromRange(cell, rangeOrRename).range;
             }
+            return {
+                ...rangeOrRename,
+                range: this.toIncomingLocationFromRange(cell, rangeOrRename.range).range,
+            };
         }
-        return rangeOrRename;
+        return rangeOrRename ?? undefined;
     }
 
-    public toIncomingDocumentLinks(cell: TextDocument, links: DocumentLink[] | null | undefined) {
+    public toIncomingDocumentLinks(
+        cell: TextDocument,
+        links: DocumentLink[] | null | undefined,
+    ): DocumentLink[] | undefined {
         if (links && Array.isArray(links)) {
             return links.map((l) => {
                 const uri = l.target ? l.target : cell.uri;
-                const location = this.toIncomingLocation(uri, l.range);
+                const location = this.toIncomingLocationFromRange(uri, l.range);
                 return {
                     ...l,
                     range: location.range,
-                    target: l.target ? location.uri : undefined
+                    target: l.target ? location.uri : undefined,
                 };
             });
         }
-        return links;
+        return links ?? undefined;
     }
 
-    public toIncomingRange(cell: TextDocument | Uri, range: Range) {
+    public toIncomingRange(cell: TextDocument | Uri, range: Range): Range {
         // This is dangerous as the URI is not remapped (location uri may be different)
-        return this.toIncomingLocation(cell, range).range;
+        return this.toIncomingLocationFromRange(cell, range).range;
     }
 
-    public toIncomingPosition(cell: TextDocument | Uri, position: Position) {
+    public toIncomingPosition(cell: TextDocument | Uri, position: Position): Position {
         // This is dangerous as the URI is not remapped (location uri may be different)
-        return this.toIncomingLocation(cell, new Range(position, position)).range.start;
+        return this.toIncomingLocationFromRange(cell, new Range(position, position)).range.start;
     }
 
-    private getCellAtLocation(location: Location) {
-        const key = this.getDocumentKey(location.uri);
+    private getTextDocumentAtLocation(location: Location): TextDocument | undefined {
+        const key = NotebookConverter.getDocumentKey(location.uri);
         const wrapper = this.activeDocuments.get(key);
         if (wrapper) {
-            return wrapper.getCellAtPosition(location.range.start);
+            return wrapper.getTextDocumentAtPosition(location.range.start);
         }
+        return undefined;
     }
 
     private toIncomingWorkspaceSymbol(symbol: SymbolInformation): SymbolInformation {
         // Figure out what cell if any the symbol is for
-        const cell = this.getCellAtLocation(symbol.location);
-        if (cell) {
-            return this.toIncomingSymbolFromSymbolInformation(cell.document, symbol);
+        const document = this.getTextDocumentAtLocation(symbol.location);
+        if (document) {
+            return this.toIncomingSymbolFromSymbolInformation(document, symbol);
         }
         return symbol;
     }
@@ -417,7 +483,7 @@ export class NotebookConverter implements Disposable {
         };
     }
 
-    // tslint:disable-next-line: no-any
+
     private toIncomingArgument(cell: TextDocument, argument: any): any {
         // URIs in a command should be remapped to the cell document if part
         // of one of our open notebooks
@@ -451,13 +517,13 @@ export class NotebookConverter implements Disposable {
             range: this.toOutgoingRange(cell, diagnostic.range),
             relatedInformation: diagnostic.relatedInformation
                 ? diagnostic.relatedInformation.map(this.toOutgoingRelatedInformation.bind(this, cell))
-                : undefined
+                : undefined,
         };
     }
 
     private toOutgoingRelatedInformation(
         cell: TextDocument,
-        relatedInformation: DiagnosticRelatedInformation
+        relatedInformation: DiagnosticRelatedInformation,
     ): DiagnosticRelatedInformation {
         const outgoingDoc = this.toOutgoingDocument(cell);
         return {
@@ -465,28 +531,28 @@ export class NotebookConverter implements Disposable {
             location:
                 relatedInformation.location.uri === outgoingDoc.uri
                     ? this.toOutgoingLocation(cell, relatedInformation.location)
-                    : relatedInformation.location
+                    : relatedInformation.location,
         };
     }
 
     private toOutgoingLocation(cell: TextDocument, location: Location): Location {
         return {
             uri: this.toOutgoingDocument(cell).uri,
-            range: this.toOutgoingRange(cell, location.range)
+            range: this.toOutgoingRange(cell, location.range),
         };
     }
 
     private toIncomingRelatedInformation(
         cell: TextDocument | Uri,
-        relatedInformation: DiagnosticRelatedInformation
+        relatedInformation: DiagnosticRelatedInformation,
     ): DiagnosticRelatedInformation {
         const outgoingUri = this.toOutgoingUri(cell);
         return {
             ...relatedInformation,
             location:
                 relatedInformation.location.uri === outgoingUri
-                    ? this.toIncomingLocationFromLink(cell, relatedInformation.location)
-                    : relatedInformation.location
+                    ? this.toIncomingLocationFromLocation(relatedInformation.location)
+                    : relatedInformation.location,
         };
     }
 
@@ -495,35 +561,61 @@ export class NotebookConverter implements Disposable {
             ...docSymbol,
             range: this.toIncomingRange(cell, docSymbol.range),
             selectionRange: this.toIncomingRange(cell, docSymbol.selectionRange),
-            children: docSymbol.children.map(this.toIncomingSymbolFromDocumentSymbol.bind(this, cell))
+            children: docSymbol.children.map(this.toIncomingSymbolFromDocumentSymbol.bind(this, cell)),
         };
     }
 
-    private toIncomingLocationFromLink(_cell: TextDocument | Uri, location: Location | LocationLink) {
-        const locationLink = <LocationLink>location;
-        const locationNorm = <Location>location;
-        const uri = this.toIncomingUri(
-            locationLink.targetUri || locationNorm.uri,
-            locationLink.targetRange ? locationLink.targetRange : locationNorm.range
-        );
-        return {
-            originSelectionRange: locationLink.originSelectionRange
-                ? this.toIncomingRange(uri, locationLink.originSelectionRange)
-                : undefined,
-            uri,
-            range: locationLink.targetRange
-                ? this.toIncomingRange(uri, locationLink.targetRange)
-                : this.toIncomingRange(uri, locationNorm.range),
-            targetSelectionRange: locationLink.targetSelectionRange
-                ? this.toIncomingRange(uri, locationLink.targetSelectionRange)
-                : undefined
-        };
+    private toIncomingLocationFromLocation(location: Location): Location {
+        if (this.locationNeedsConversion(location.uri)) {
+            const uri = this.toIncomingUri(location.uri, location.range);
+
+            return {
+                uri,
+                range: this.toIncomingRange(uri, location.range),
+            };
+        }
+
+        return location;
+    }
+
+    private toIncomingLocationLinkFromLocationLink(locationLink: LocationLink): LocationLink {
+        if (this.locationNeedsConversion(locationLink.targetUri)) {
+            const uri = this.toIncomingUri(locationLink.targetUri, locationLink.targetRange);
+
+            return {
+                originSelectionRange: locationLink.originSelectionRange
+                    ? this.toIncomingRange(uri, locationLink.originSelectionRange)
+                    : undefined,
+                targetUri: uri,
+                targetRange: this.toIncomingRange(uri, locationLink.targetRange),
+                targetSelectionRange: locationLink.targetSelectionRange
+                    ? this.toIncomingRange(uri, locationLink.targetSelectionRange)
+                    : undefined,
+            };
+        }
+
+        return locationLink;
+    }
+
+    private toIncomingLocationOrLink(location: Location | LocationLink) {
+        // Split on if we are dealing with a Location or a LocationLink
+        if ('targetUri' in location) {
+            // targetUri only for LocationLinks
+            return this.toIncomingLocationLinkFromLocationLink(location);
+        }
+        return this.toIncomingLocationFromLocation(location);
+    }
+
+    // Returns true if the given location needs conversion
+    // Should be if it's in a notebook cell or if it's in a notebook concat document
+    private locationNeedsConversion(locationUri: Uri): boolean {
+        return locationUri.scheme === NotebookCellScheme || this.getWrapperFromOutgoingUri(locationUri) !== undefined;
     }
 
     private toIncomingUri(outgoingUri: Uri, range: Range) {
         const wrapper = this.getWrapperFromOutgoingUri(outgoingUri);
         if (wrapper) {
-            const location = wrapper.concatDocument.locationAt(range);
+            const location = wrapper.locationAt(range);
             return location.uri;
         }
         return outgoingUri;
@@ -534,22 +626,21 @@ export class NotebookConverter implements Disposable {
             if (item.range instanceof Range) {
                 return {
                     ...item,
-                    range: this.toIncomingRange(cell, item.range)
-                };
-            } else {
-                return {
-                    ...item,
-                    range: {
-                        inserting: this.toIncomingRange(cell, item.range.inserting),
-                        replacing: this.toIncomingRange(cell, item.range.replacing)
-                    }
+                    range: this.toIncomingRange(cell, item.range),
                 };
             }
+            return {
+                ...item,
+                range: {
+                    inserting: this.toIncomingRange(cell, item.range.inserting),
+                    replacing: this.toIncomingRange(cell, item.range.replacing),
+                },
+            };
         }
         return item;
     }
 
-    private toIncomingLocation(cell: TextDocument | Uri, range: Range): Location {
+    private toIncomingLocationFromRange(cell: TextDocument | Uri, range: Range): Location {
         const uri = cell instanceof Uri ? <Uri>cell : cell.uri;
         const concatDocument = this.getConcatDocument(cell);
         if (concatDocument) {
@@ -557,12 +648,12 @@ export class NotebookConverter implements Disposable {
             const endLoc = concatDocument.locationAt(range.end);
             return {
                 uri: startLoc.uri,
-                range: new Range(startLoc.range.start, endLoc.range.end)
+                range: new Range(startLoc.range.start, endLoc.range.end),
             };
         }
         return {
             uri,
-            range
+            range,
         };
     }
 
@@ -571,40 +662,36 @@ export class NotebookConverter implements Disposable {
             range: this.toOutgoingRange(cell, ev.range),
             rangeLength: ev.rangeLength,
             rangeOffset: this.toOutgoingOffset(cell, ev.rangeOffset),
-            text: ev.text
+            text: ev.text,
         };
     }
 
-    private getDocumentKey(uri: Uri): string {
-        // Use the path of the doc uri. It should be the same for all cells
-        if (os.platform() === 'win32') {
-            return uri.fsPath.toLowerCase();
-        }
-        return uri.fsPath;
-    }
-
     private onDidOpenNotebook(doc: NotebookDocument) {
-        if (this.notebookFilter.test(doc.fileName)) {
+        if (this.notebookFilter.test(doc.uri.fsPath)) {
             this.getTextDocumentWrapper(doc.uri);
+            const key = NotebookConverter.getDocumentKey(doc.uri);
+            this.pendingCloseDocuments.delete(key);
         }
     }
 
     private onDidCloseNotebook(doc: NotebookDocument) {
-        if (this.notebookFilter.test(doc.fileName)) {
-            const key = this.getDocumentKey(doc.uri);
+        if (this.notebookFilter.test(doc.uri.fsPath)) {
+            const key = NotebookConverter.getDocumentKey(doc.uri);
             const wrapper = this.getTextDocumentWrapper(doc.uri);
             this.activeDocuments.delete(key);
-            this.activeDocumentsOutgoingMap.delete(this.getDocumentKey(wrapper.uri));
+            this.activeDocumentsOutgoingMap.delete(NotebookConverter.getDocumentKey(wrapper.uri));
+            this.pendingCloseDocuments.set(key, wrapper);
+            wrapper.dispose();
         }
     }
 
     private getWrapperFromOutgoingUri(outgoingUri: Uri): NotebookConcatDocument | undefined {
-        return this.activeDocumentsOutgoingMap.get(this.getDocumentKey(outgoingUri));
+        return this.activeDocumentsOutgoingMap.get(NotebookConverter.getDocumentKey(outgoingUri));
     }
 
     private getTextDocumentWrapper(cell: TextDocument | Uri): NotebookConcatDocument {
         const uri = cell instanceof Uri ? <Uri>cell : cell.uri;
-        const key = this.getDocumentKey(uri);
+        const key = NotebookConverter.getDocumentKey(uri);
         let result = this.activeDocuments.get(key);
         if (!result) {
             const doc = this.api.notebookDocuments.find((n) => this.fs.arePathsSame(uri.fsPath, n.uri.fsPath));
@@ -612,13 +699,15 @@ export class NotebookConverter implements Disposable {
                 throw new Error(`Invalid uri, not a notebook: ${uri.fsPath}`);
             }
             result = new NotebookConcatDocument(doc, this.api, this.cellSelector);
+            this.disposables.push(result);
+            result.onCellsChanged((e) => this.onDidChangeCellsEmitter.fire(e), undefined, this.disposables);
             this.activeDocuments.set(key, result);
-            this.activeDocumentsOutgoingMap.set(this.getDocumentKey(result.uri), result);
+            this.activeDocumentsOutgoingMap.set(NotebookConverter.getDocumentKey(result.uri), result);
         }
         return result;
     }
 
-    private getConcatDocument(cell: TextDocument | Uri): NotebookConcatTextDocument | undefined {
+    private getConcatDocument(cell: TextDocument | Uri): IConcatTextDocument | undefined {
         return this.getTextDocumentWrapper(cell)?.concatDocument;
     }
 }

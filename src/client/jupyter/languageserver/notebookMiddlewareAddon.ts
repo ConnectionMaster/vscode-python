@@ -15,7 +15,6 @@ import {
     Disposable,
     DocumentHighlight,
     DocumentLink,
-    DocumentSelector,
     DocumentSymbol,
     FormattingOptions,
     Location,
@@ -31,7 +30,7 @@ import {
     TextDocumentWillSaveEvent,
     TextEdit,
     Uri,
-    WorkspaceEdit
+    WorkspaceEdit,
 } from 'vscode';
 import {
     DidChangeTextDocumentNotification,
@@ -56,7 +55,7 @@ import {
     ProvideWorkspaceSymbolsSignature,
     ResolveCodeLensSignature,
     ResolveCompletionItemSignature,
-    ResolveDocumentLinkSignature
+    ResolveDocumentLinkSignature,
 } from 'vscode-languageclient/node';
 
 import { ProvideDeclarationSignature } from 'vscode-languageclient/lib/common/declaration';
@@ -76,21 +75,25 @@ import { NotebookConverter } from './notebookConverter';
 export class NotebookMiddlewareAddon implements Middleware, Disposable {
     private converter: NotebookConverter;
 
+    private didChangeCellsDisposable: Disposable;
+
     constructor(
         notebookApi: IVSCodeNotebook,
         private readonly getClient: () => LanguageClient | undefined,
         fs: IFileSystem,
-        cellSelector: DocumentSelector,
-        notebookFileRegex: RegExp
+        cellSelector: string,
+        notebookFileRegex: RegExp,
     ) {
         this.converter = new NotebookConverter(notebookApi, fs, cellSelector, notebookFileRegex);
+        this.didChangeCellsDisposable = this.converter.onDidChangeCells(this.onDidChangeCells.bind(this));
     }
 
-    public dispose() {
+    public dispose(): void {
+        this.didChangeCellsDisposable.dispose();
         this.converter.dispose();
     }
 
-    public didChange(event: TextDocumentChangeEvent, next: (ev: TextDocumentChangeEvent) => void) {
+    public didChange(event: TextDocumentChangeEvent, next: (ev: TextDocumentChangeEvent) => void): void {
         // We need to talk directly to the language client here.
         const client = this.getClient();
 
@@ -107,55 +110,66 @@ export class NotebookMiddlewareAddon implements Middleware, Disposable {
         }
     }
 
-    public didOpen(document: TextDocument, next: (ev: TextDocument) => void) {
+    public didOpen(document: TextDocument, next: (ev: TextDocument) => void): () => void {
         // If this is a notebook cell, change this into a concat document if this is the first time.
         if (isNotebookCell(document.uri)) {
             if (!this.converter.hasFiredOpen(document)) {
                 this.converter.firedOpen(document);
                 const newDoc = this.converter.toOutgoingDocument(document);
-                return next(newDoc);
+                next(newDoc);
             }
         } else {
             next(document);
         }
+
+        return () => {
+            // Do nothing
+        };
     }
 
-    public didClose(document: TextDocument, next: (ev: TextDocument) => void) {
+    public didClose(document: TextDocument, next: (ev: TextDocument) => void): () => void {
         // If this is a notebook cell, change this into a concat document if this is the first time.
         if (isNotebookCell(document.uri)) {
-            // Cell delete causes this callback, but won't fire the close event because it's not
-            // in the document anymore.
-            if (this.converter.hasCell(document) && !this.converter.hasFiredClose(document)) {
-                this.converter.firedClose(document);
-                const newDoc = this.converter.toOutgoingDocument(document);
-                return next(newDoc);
+            const newDoc = this.converter.firedClose(document);
+            if (newDoc) {
+                // Cell delete causes this callback, but won't fire the close event because it's not
+                // in the document anymore.
+                next(newDoc);
             }
-        } else {
-            next(document);
         }
+
+        next(document);
+
+        return () => {
+            // Do nothing
+        };
     }
 
-    public didSave(event: TextDocument, next: (ev: TextDocument) => void) {
+    // eslint-disable-next-line class-methods-use-this
+    public didSave(event: TextDocument, next: (ev: TextDocument) => void): void {
         return next(event);
     }
 
-    public willSave(event: TextDocumentWillSaveEvent, next: (ev: TextDocumentWillSaveEvent) => void) {
+    // eslint-disable-next-line class-methods-use-this
+    public willSave(event: TextDocumentWillSaveEvent, next: (ev: TextDocumentWillSaveEvent) => void): void {
         return next(event);
     }
 
+    // eslint-disable-next-line class-methods-use-this
     public willSaveWaitUntil(
         event: TextDocumentWillSaveEvent,
-        next: (ev: TextDocumentWillSaveEvent) => Thenable<TextEdit[]>
-    ) {
+        next: (ev: TextDocumentWillSaveEvent) => Thenable<TextEdit[]>,
+    ): Thenable<TextEdit[]> {
         return next(event);
     }
 
+    // eslint-disable-next-line @typescript-eslint/explicit-module-boundary-types
     public provideCompletionItem(
         document: TextDocument,
         position: Position,
         context: CompletionContext,
         token: CancellationToken,
-        next: ProvideCompletionItemsSignature
+        next: ProvideCompletionItemsSignature,
     ) {
         if (isNotebookCell(document.uri)) {
             const newDoc = this.converter.toOutgoingDocument(document);
@@ -169,11 +183,12 @@ export class NotebookMiddlewareAddon implements Middleware, Disposable {
         return next(document, position, context, token);
     }
 
+    // eslint-disable-next-line @typescript-eslint/explicit-module-boundary-types
     public provideHover(
         document: TextDocument,
         position: Position,
         token: CancellationToken,
-        next: ProvideHoverSignature
+        next: ProvideHoverSignature,
     ) {
         if (isNotebookCell(document.uri)) {
             const newDoc = this.converter.toOutgoingDocument(document);
@@ -187,13 +202,14 @@ export class NotebookMiddlewareAddon implements Middleware, Disposable {
         return next(document, position, token);
     }
 
+    // eslint-disable-next-line class-methods-use-this
     public resolveCompletionItem(
         item: CompletionItem,
         token: CancellationToken,
-        next: ResolveCompletionItemSignature
+        next: ResolveCompletionItemSignature,
     ): ProviderResult<CompletionItem> {
         // Range should have already been remapped.
-        // tslint:disable-next-line: no-suspicious-comment
+
         // TODO: What if the LS needs to read the range? It won't make sense. This might mean
         // doing this at the extension level is not possible.
         return next(item, token);
@@ -204,7 +220,7 @@ export class NotebookMiddlewareAddon implements Middleware, Disposable {
         position: Position,
         context: SignatureHelpContext,
         token: CancellationToken,
-        next: ProvideSignatureHelpSignature
+        next: ProvideSignatureHelpSignature,
     ): ProviderResult<SignatureHelp> {
         if (isNotebookCell(document.uri)) {
             const newDoc = this.converter.toOutgoingDocument(document);
@@ -218,16 +234,16 @@ export class NotebookMiddlewareAddon implements Middleware, Disposable {
         document: TextDocument,
         position: Position,
         token: CancellationToken,
-        next: ProvideDefinitionSignature
+        next: ProvideDefinitionSignature,
     ): ProviderResult<Definition | DefinitionLink[]> {
         if (isNotebookCell(document.uri)) {
             const newDoc = this.converter.toOutgoingDocument(document);
             const newPos = this.converter.toOutgoingPosition(document, position);
             const result = next(newDoc, newPos, token);
             if (isThenable(result)) {
-                return result.then(this.converter.toIncomingLocations.bind(this.converter, document));
+                return result.then(this.converter.toIncomingLocations.bind(this.converter));
             }
-            return this.converter.toIncomingLocations(document, result);
+            return this.converter.toIncomingLocations(result);
         }
         return next(document, position, token);
     }
@@ -239,16 +255,16 @@ export class NotebookMiddlewareAddon implements Middleware, Disposable {
             includeDeclaration: boolean;
         },
         token: CancellationToken,
-        next: ProvideReferencesSignature
+        next: ProvideReferencesSignature,
     ): ProviderResult<Location[]> {
         if (isNotebookCell(document.uri)) {
             const newDoc = this.converter.toOutgoingDocument(document);
             const newPos = this.converter.toOutgoingPosition(document, position);
             const result = next(newDoc, newPos, options, token);
             if (isThenable(result)) {
-                return result.then(this.converter.toIncomingLocations.bind(this.converter, document));
+                return result.then(this.converter.toIncomingLocations.bind(this.converter));
             }
-            return this.converter.toIncomingLocations(document, result);
+            return this.converter.toIncomingLocations(result);
         }
         return next(document, position, options, token);
     }
@@ -257,7 +273,7 @@ export class NotebookMiddlewareAddon implements Middleware, Disposable {
         document: TextDocument,
         position: Position,
         token: CancellationToken,
-        next: ProvideDocumentHighlightsSignature
+        next: ProvideDocumentHighlightsSignature,
     ): ProviderResult<DocumentHighlight[]> {
         if (isNotebookCell(document.uri)) {
             const newDoc = this.converter.toOutgoingDocument(document);
@@ -274,7 +290,7 @@ export class NotebookMiddlewareAddon implements Middleware, Disposable {
     public provideDocumentSymbols(
         document: TextDocument,
         token: CancellationToken,
-        next: ProvideDocumentSymbolsSignature
+        next: ProvideDocumentSymbolsSignature,
     ): ProviderResult<SymbolInformation[] | DocumentSymbol[]> {
         if (isNotebookCell(document.uri)) {
             const newDoc = this.converter.toOutgoingDocument(document);
@@ -290,7 +306,7 @@ export class NotebookMiddlewareAddon implements Middleware, Disposable {
     public provideWorkspaceSymbols(
         query: string,
         token: CancellationToken,
-        next: ProvideWorkspaceSymbolsSignature
+        next: ProvideWorkspaceSymbolsSignature,
     ): ProviderResult<SymbolInformation[]> {
         const result = next(query, token);
         if (isThenable(result)) {
@@ -299,105 +315,113 @@ export class NotebookMiddlewareAddon implements Middleware, Disposable {
         return this.converter.toIncomingWorkspaceSymbols(result);
     }
 
+    // eslint-disable-next-line class-methods-use-this
     public provideCodeActions(
         document: TextDocument,
         range: Range,
         context: CodeActionContext,
         token: CancellationToken,
-        next: ProvideCodeActionsSignature
+        next: ProvideCodeActionsSignature,
     ): ProviderResult<(Command | CodeAction)[]> {
         if (isNotebookCell(document.uri)) {
-            traceInfo(`provideCodeActions not currently supported for notebooks`);
+            traceInfo('provideCodeActions not currently supported for notebooks');
             return undefined;
         }
         return next(document, range, context, token);
     }
 
+    // eslint-disable-next-line class-methods-use-this
     public provideCodeLenses(
         document: TextDocument,
         token: CancellationToken,
-        next: ProvideCodeLensesSignature
+        next: ProvideCodeLensesSignature,
     ): ProviderResult<CodeLens[]> {
         if (isNotebookCell(document.uri)) {
-            traceInfo(`provideCodeLenses not currently supported for notebooks`);
+            traceInfo('provideCodeLenses not currently supported for notebooks');
             return undefined;
         }
         return next(document, token);
     }
 
+    // eslint-disable-next-line class-methods-use-this
     public resolveCodeLens(
         codeLens: CodeLens,
         token: CancellationToken,
-        next: ResolveCodeLensSignature
+        next: ResolveCodeLensSignature,
     ): ProviderResult<CodeLens> {
         // Range should have already been remapped.
-        // tslint:disable-next-line: no-suspicious-comment
+
         // TODO: What if the LS needs to read the range? It won't make sense. This might mean
         // doing this at the extension level is not possible.
         return next(codeLens, token);
     }
 
+    // eslint-disable-next-line class-methods-use-this
     public provideDocumentFormattingEdits(
         document: TextDocument,
         options: FormattingOptions,
         token: CancellationToken,
-        next: ProvideDocumentFormattingEditsSignature
+        next: ProvideDocumentFormattingEditsSignature,
     ): ProviderResult<TextEdit[]> {
         if (isNotebookCell(document.uri)) {
-            traceInfo(`provideDocumentFormattingEdits not currently supported for notebooks`);
+            traceInfo('provideDocumentFormattingEdits not currently supported for notebooks');
             return undefined;
         }
         return next(document, options, token);
     }
 
+    // eslint-disable-next-line class-methods-use-this
     public provideDocumentRangeFormattingEdits(
         document: TextDocument,
         range: Range,
         options: FormattingOptions,
         token: CancellationToken,
-        next: ProvideDocumentRangeFormattingEditsSignature
+        next: ProvideDocumentRangeFormattingEditsSignature,
     ): ProviderResult<TextEdit[]> {
         if (isNotebookCell(document.uri)) {
-            traceInfo(`provideDocumentRangeFormattingEdits not currently supported for notebooks`);
+            traceInfo('provideDocumentRangeFormattingEdits not currently supported for notebooks');
             return undefined;
         }
         return next(document, range, options, token);
     }
 
+    // eslint-disable-next-line class-methods-use-this
     public provideOnTypeFormattingEdits(
         document: TextDocument,
         position: Position,
         ch: string,
         options: FormattingOptions,
         token: CancellationToken,
-        next: ProvideOnTypeFormattingEditsSignature
+        next: ProvideOnTypeFormattingEditsSignature,
     ): ProviderResult<TextEdit[]> {
         if (isNotebookCell(document.uri)) {
-            traceInfo(`provideOnTypeFormattingEdits not currently supported for notebooks`);
+            traceInfo('provideOnTypeFormattingEdits not currently supported for notebooks');
             return undefined;
         }
         return next(document, position, ch, options, token);
     }
 
+    // eslint-disable-next-line class-methods-use-this
     public provideRenameEdits(
         document: TextDocument,
         position: Position,
         newName: string,
         token: CancellationToken,
-        next: ProvideRenameEditsSignature
+        next: ProvideRenameEditsSignature,
     ): ProviderResult<WorkspaceEdit> {
         if (isNotebookCell(document.uri)) {
-            traceInfo(`provideRenameEdits not currently supported for notebooks`);
+            traceInfo('provideRenameEdits not currently supported for notebooks');
             return undefined;
         }
         return next(document, position, newName, token);
     }
 
+    // eslint-disable-next-line class-methods-use-this
     public prepareRename(
         document: TextDocument,
         position: Position,
         token: CancellationToken,
-        next: PrepareRenameSignature
+        next: PrepareRenameSignature,
     ): ProviderResult<
         | Range
         | {
@@ -406,54 +430,69 @@ export class NotebookMiddlewareAddon implements Middleware, Disposable {
           }
     > {
         if (isNotebookCell(document.uri)) {
-            traceInfo(`prepareRename not currently supported for notebooks`);
+            traceInfo('prepareRename not currently supported for notebooks');
             return undefined;
         }
         return next(document, position, token);
     }
 
+    // eslint-disable-next-line class-methods-use-this
     public provideDocumentLinks(
         document: TextDocument,
         token: CancellationToken,
-        next: ProvideDocumentLinksSignature
+        next: ProvideDocumentLinksSignature,
     ): ProviderResult<DocumentLink[]> {
         if (isNotebookCell(document.uri)) {
-            traceInfo(`provideDocumentLinks not currently supported for notebooks`);
+            traceInfo('provideDocumentLinks not currently supported for notebooks');
             return undefined;
         }
         return next(document, token);
     }
 
+    // eslint-disable-next-line class-methods-use-this
     public resolveDocumentLink(
         link: DocumentLink,
         token: CancellationToken,
-        next: ResolveDocumentLinkSignature
+        next: ResolveDocumentLinkSignature,
     ): ProviderResult<DocumentLink> {
         // Range should have already been remapped.
-        // tslint:disable-next-line: no-suspicious-comment
+
         // TODO: What if the LS needs to read the range? It won't make sense. This might mean
         // doing this at the extension level is not possible.
         return next(link, token);
     }
 
+    // eslint-disable-next-line class-methods-use-this
     public provideDeclaration(
         document: TextDocument,
         position: VPosition,
         token: CancellationToken,
-        next: ProvideDeclarationSignature
+        next: ProvideDeclarationSignature,
     ): ProviderResult<VDeclaration> {
         if (isNotebookCell(document.uri)) {
-            traceInfo(`provideDeclaration not currently supported for notebooks`);
+            traceInfo('provideDeclaration not currently supported for notebooks');
             return undefined;
         }
         return next(document, position, token);
     }
 
-    public handleDiagnostics(uri: Uri, diagnostics: Diagnostic[], next: HandleDiagnosticsSignature) {
+    public handleDiagnostics(uri: Uri, diagnostics: Diagnostic[], next: HandleDiagnosticsSignature): void {
         // Remap any wrapped documents so that diagnostics appear in the cells. Note that if we
         // get a diagnostics list for our concated document, we have to tell VS code about EVERY cell.
         // Otherwise old messages for cells that didn't change this time won't go away.
         const newDiagMapping = this.converter.toIncomingDiagnosticsMap(uri, diagnostics);
         [...newDiagMapping.keys()].forEach((k) => next(k, newDiagMapping.get(k)!));
+    }
+
+    private onDidChangeCells(e: TextDocumentChangeEvent) {
+        // This event fires when the user moves, deletes, or inserts cells into the concatenated document
+        // Since this doesn't fire a change event (since a document wasn't changed), we have to make one ourselves.
+
+        // Note: The event should already be setup to be an outgoing event. It's from the point of view of the concatenated document.
+        const client = this.getClient();
+        if (client) {
+            const params = client.code2ProtocolConverter.asChangeTextDocumentParams(e);
+            client.sendNotification(DidChangeTextDocumentNotification.type, params);
+        }
     }
 }

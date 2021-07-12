@@ -7,21 +7,26 @@ import * as assert from 'assert';
 import * as sinon from 'sinon';
 import { ImportMock } from 'ts-mock-imports';
 import { ExecutionResult } from '../../../client/common/process/types';
+import { IDisposableRegistry } from '../../../client/common/types';
 import { Architecture } from '../../../client/common/utils/platform';
 import { InterpreterInformation } from '../../../client/pythonEnvironments/base/info/interpreter';
 import { parseVersion } from '../../../client/pythonEnvironments/base/info/pythonVersion';
 import * as ExternalDep from '../../../client/pythonEnvironments/common/externalDependencies';
 import {
-    EnvironmentInfoService,
     EnvironmentInfoServiceQueuePriority,
+    getEnvironmentInfoService,
 } from '../../../client/pythonEnvironments/info/environmentInfoService';
 
 suite('Environment Info Service', () => {
     let stubShellExec: sinon.SinonStub;
+    let disposables: IDisposableRegistry;
 
     function createExpectedEnvInfo(executable: string): InterpreterInformation {
         return {
-            version: { ...parseVersion('3.8.3-final'), sysVersion: '3.8.3 (tags/v3.8.3:6f8c832, May 13 2020, 22:37:02) [MSC v.1924 64 bit (AMD64)]' },
+            version: {
+                ...parseVersion('3.8.3-final'),
+                sysVersion: '3.8.3 (tags/v3.8.3:6f8c832, May 13 2020, 22:37:02) [MSC v.1924 64 bit (AMD64)]',
+            },
             arch: Architecture.x64,
             executable: {
                 filename: executable,
@@ -33,6 +38,7 @@ suite('Environment Info Service', () => {
     }
 
     setup(() => {
+        disposables = [];
         stubShellExec = ImportMock.mockFunction(
             ExternalDep,
             'shellExecute',
@@ -46,9 +52,10 @@ suite('Environment Info Service', () => {
     });
     teardown(() => {
         stubShellExec.restore();
+        disposables.forEach((d) => d.dispose());
     });
     test('Add items to queue and get results', async () => {
-        const envService = new EnvironmentInfoService();
+        const envService = getEnvironmentInfoService(disposables);
         const promises: Promise<InterpreterInformation | undefined>[] = [];
         const expected: InterpreterInformation[] = [];
         for (let i = 0; i < 10; i = i + 1) {
@@ -71,7 +78,7 @@ suite('Environment Info Service', () => {
     });
 
     test('Add same item to queue', async () => {
-        const envService = new EnvironmentInfoService();
+        const envService = getEnvironmentInfoService(disposables);
         const promises: Promise<InterpreterInformation | undefined>[] = [];
         const expected: InterpreterInformation[] = [];
 
@@ -93,7 +100,7 @@ suite('Environment Info Service', () => {
     });
 
     test('isInfoProvided() returns true for items already processed', async () => {
-        const envService = new EnvironmentInfoService();
+        const envService = getEnvironmentInfoService(disposables);
         let result: boolean;
         const promises: Promise<InterpreterInformation | undefined>[] = [];
         const path1 = 'any-path1';
@@ -110,7 +117,7 @@ suite('Environment Info Service', () => {
     });
 
     test('isInfoProvided() returns false otherwise', async () => {
-        const envService = new EnvironmentInfoService();
+        const envService = getEnvironmentInfoService(disposables);
         const promises: Promise<InterpreterInformation | undefined>[] = [];
         const path1 = 'any-path1';
         const path2 = 'any-path2';

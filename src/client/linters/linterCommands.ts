@@ -54,7 +54,7 @@ export class LinterCommands implements IDisposable {
         const quickPickOptions: QuickPickOptions = {
             matchOnDetail: true,
             matchOnDescription: true,
-            placeHolder: `current: ${current}`
+            placeHolder: `current: ${current}`,
         };
 
         const selection = await this.appShell.showQuickPick(linterList, quickPickOptions);
@@ -68,7 +68,7 @@ export class LinterCommands implements IDisposable {
                     const response = await this.appShell.showWarningMessage(
                         Linters.replaceWithSelectedLinter().format(selection),
                         'Yes',
-                        'No'
+                        'No',
                     );
                     if (response !== 'Yes') {
                         return;
@@ -81,18 +81,19 @@ export class LinterCommands implements IDisposable {
     }
 
     public async enableLintingAsync(): Promise<void> {
-        const options = ['on', 'off'];
+        const options = ['Enable', 'Disable'];
         const current = (await this.linterManager.isLintingEnabled(true, this.settingsUri)) ? options[0] : options[1];
 
         const quickPickOptions: QuickPickOptions = {
             matchOnDetail: true,
             matchOnDescription: true,
-            placeHolder: `current: ${current}`
+            placeHolder: `current: ${current}`,
         };
 
         const selection = await this.appShell.showQuickPick(options, quickPickOptions);
+
         if (selection !== undefined) {
-            const enable = selection === options[0];
+            const enable: boolean = selection === options[0];
             await this.linterManager.enableLintingAsync(enable, this.settingsUri);
         }
     }

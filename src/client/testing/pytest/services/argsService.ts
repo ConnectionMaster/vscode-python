@@ -5,7 +5,7 @@
 
 import { inject, injectable } from 'inversify';
 import { IServiceContainer } from '../../../ioc/types';
-import { IArgumentsHelper, IArgumentsService, TestFilter } from '../../types';
+import { IArgumentsHelper, IArgumentsService, TestFilter } from '../../common/types';
 
 const OptionsWithArguments = [
     '-c',
@@ -20,6 +20,7 @@ const OptionsWithArguments = [
     '--basetemp',
     '--cache-show',
     '--capture',
+    '--code-highlight',
     '--color',
     '--confcutdir',
     '--cov',
@@ -31,6 +32,7 @@ const OptionsWithArguments = [
     '--doctest-glob',
     '--doctest-report',
     '--durations',
+    '--durations-min',
     '--ignore',
     '--ignore-glob',
     '--import-mode',
@@ -63,7 +65,7 @@ const OptionsWithArguments = [
     '--numprocesses',
     '--rsyncdir',
     '--rsyncignore',
-    '--tx'
+    '--tx',
 ];
 
 const OptionsWithoutArguments = [
@@ -97,7 +99,9 @@ const OptionsWithoutArguments = [
     '--nf',
     '--no-cov',
     '--no-cov-on-fail',
+    '--no-header',
     '--no-print-logs',
+    '--no-summary',
     '--noconftest',
     '--old-summary',
     '--pdb',
@@ -113,6 +117,7 @@ const OptionsWithoutArguments = [
     '--sw',
     '--stepwise-skip',
     '--strict',
+    '--strict-config',
     '--strict-markers',
     '--trace-config',
     '--verbose',
@@ -129,25 +134,30 @@ const OptionsWithoutArguments = [
     '--looponfail',
     '--trace',
     '--tx',
-    '-d'
+    '-d',
 ];
+
+function getKnownOptions(): { withArgs: string[]; withoutArgs: string[] } {
+    return {
+        withArgs: OptionsWithArguments,
+        withoutArgs: OptionsWithoutArguments,
+    };
+}
 
 @injectable()
 export class ArgumentsService implements IArgumentsService {
+    public readonly getKnownOptions = getKnownOptions;
+
     private readonly helper: IArgumentsHelper;
+
     constructor(@inject(IServiceContainer) serviceContainer: IServiceContainer) {
         this.helper = serviceContainer.get<IArgumentsHelper>(IArgumentsHelper);
     }
-    public getKnownOptions(): { withArgs: string[]; withoutArgs: string[] } {
-        return {
-            withArgs: OptionsWithArguments,
-            withoutArgs: OptionsWithoutArguments
-        };
-    }
+
     public getOptionValue(args: string[], option: string): string | string[] | undefined {
         return this.helper.getOptionValues(args, option);
     }
-    // tslint:disable-next-line: max-func-body-length
+
     public filterArguments(args: string[], argumentToRemoveOrFilter: string[] | TestFilter): string[] {
         const optionsWithoutArgsToRemove: string[] = [];
         const optionsWithArgsToRemove: string[] = [];
@@ -167,7 +177,7 @@ export class ArgumentsService implements IArgumentsService {
             switch (argumentToRemoveOrFilter) {
                 case TestFilter.removeTests: {
                     optionsWithoutArgsToRemove.push(
-                        ...['--lf', '--last-failed', '--ff', '--failed-first', '--nf', '--new-first']
+                        ...['--lf', '--last-failed', '--ff', '--failed-first', '--nf', '--new-first'],
                     );
                     optionsWithArgsToRemove.push(...['-k', '-m', '--lfnf', '--last-failed-no-failures']);
                     removePositionalArgs = true;
@@ -200,8 +210,8 @@ export class ArgumentsService implements IArgumentsService {
                             '--setup-only',
                             '--setup-show',
                             '--setup-plan',
-                            '--trace'
-                        ]
+                            '--trace',
+                        ],
                     );
                     optionsWithArgsToRemove.push(
                         ...[
@@ -222,8 +232,8 @@ export class ArgumentsService implements IArgumentsService {
                             '--result-log',
                             '-W',
                             '--pythonwarnings',
-                            '--log-*'
-                        ]
+                            '--log-*',
+                        ],
                     );
                     removePositionalArgs = true;
                     break;
@@ -244,8 +254,8 @@ export class ArgumentsService implements IArgumentsService {
                             '--failed-first',
                             '--nf',
                             '--new-first',
-                            '--trace'
-                        ]
+                            '--trace',
+                        ],
                     );
                     optionsWithArgsToRemove.push(...['-k', '-m', '--lfnf', '--last-failed-no-failures']);
                     removePositionalArgs = true;
@@ -262,12 +272,13 @@ export class ArgumentsService implements IArgumentsService {
             const positionalArgs = this.helper.getPositionalArguments(
                 filteredArgs,
                 OptionsWithArguments,
-                OptionsWithoutArguments
+                OptionsWithoutArguments,
             );
             filteredArgs = filteredArgs.filter((item) => positionalArgs.indexOf(item) === -1);
         }
         return this.helper.filterArguments(filteredArgs, optionsWithArgsToRemove, optionsWithoutArgsToRemove);
     }
+
     public getTestFolders(args: string[]): string[] {
         const testDirs = this.helper.getOptionValues(args, '--rootdir');
         if (typeof testDirs === 'string') {

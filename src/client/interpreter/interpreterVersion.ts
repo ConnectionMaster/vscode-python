@@ -5,7 +5,7 @@ import { IProcessServiceFactory } from '../common/process/types';
 import { getPythonVersion } from '../pythonEnvironments/info/pythonVersion';
 import { IInterpreterVersionService } from './contracts';
 
-export const PIP_VERSION_REGEX = '\\d+\\.\\d+(\\.\\d+)?';
+const PIP_VERSION_REGEX = '\\d+\\.\\d+(\\.\\d+)?';
 
 @injectable()
 export class InterpreterVersionService implements IInterpreterVersionService {
@@ -14,7 +14,7 @@ export class InterpreterVersionService implements IInterpreterVersionService {
     public async getVersion(pythonPath: string, defaultValue: string): Promise<string> {
         const processService = await this.processServiceFactory.create();
         return getPythonVersion(pythonPath, defaultValue, (cmd, args) =>
-            processService.exec(cmd, args, { mergeStdOutErr: true })
+            processService.exec(cmd, args, { mergeStdOutErr: true }),
         );
     }
 

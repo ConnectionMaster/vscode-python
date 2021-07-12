@@ -1,20 +1,19 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
+
 'use strict';
 
 import * as fs from 'fs-extra';
 import * as path from 'path';
-import { instance, mock } from 'ts-mockito';
 import { CancellationTokenSource, Position, Uri, window, workspace } from 'vscode';
 import { IProcessServiceFactory } from '../../client/common/process/types';
 import { AutoPep8Formatter } from '../../client/formatters/autoPep8Formatter';
 import { BlackFormatter } from '../../client/formatters/blackFormatter';
 import { YapfFormatter } from '../../client/formatters/yapfFormatter';
-import { PythonEnvironments } from '../../client/pythonEnvironments/api';
-import { registerForIOC } from '../../client/pythonEnvironments/legacyIOC';
 import { isPythonVersionInProcess } from '../common';
 import { closeActiveWindows, initialize, initializeTest } from '../initialize';
 import { MockProcessService } from '../mocks/proc';
+import { registerForIOC } from '../pythonEnvironments/legacyIOC';
 import { UnitTestIocContainer } from '../testing/serviceRegistry';
 import { compareFiles } from '../textUtils';
 
@@ -34,18 +33,16 @@ let formattedYapf = '';
 let formattedBlack = '';
 let formattedAutoPep8 = '';
 
-// tslint:disable-next-line:max-func-body-length
 suite('Formatting - General', () => {
     let ioc: UnitTestIocContainer;
-    let pythonEnvs: PythonEnvironments;
 
     suiteSetup(async function () {
         // https://github.com/microsoft/vscode-python/issues/12564
         // Skipping one test in the file is resulting in the next one failing, so skipping the entire suiteuntil further investigation.
-        // tslint:disable-next-line: no-invalid-this
+
         return this.skip();
         await initialize();
-        initializeDI();
+        await initializeDI();
         [autoPep8FileToFormat, blackFileToFormat, yapfFileToFormat].forEach((file) => {
             fs.copySync(originalUnformattedFile, file, { overwrite: true });
         });
@@ -63,8 +60,7 @@ suite('Formatting - General', () => {
 
     setup(async () => {
         await initializeTest();
-        pythonEnvs = mock(PythonEnvironments);
-        initializeDI();
+        await initializeDI();
     });
     suiteTeardown(async () => {
         [autoPep8FileToFormat, blackFileToFormat, yapfFileToFormat].forEach((file) => {
@@ -79,7 +75,7 @@ suite('Formatting - General', () => {
         await ioc.dispose();
     });
 
-    function initializeDI() {
+    async function initializeDI() {
         ioc = new UnitTestIocContainer();
         ioc.registerCommonTypes();
         ioc.registerVariableTypes();
@@ -89,9 +85,9 @@ suite('Formatting - General', () => {
 
         // Mocks.
         ioc.registerMockProcessTypes();
-        ioc.registerMockInterpreterTypes();
+        await ioc.registerMockInterpreterTypes();
 
-        registerForIOC(ioc.serviceManager, ioc.serviceContainer, instance(pythonEnvs));
+        await registerForIOC(ioc.serviceManager, ioc.serviceContainer);
     }
 
     async function injectFormatOutput(outputFileName: string) {
@@ -102,7 +98,7 @@ suite('Formatting - General', () => {
             if (args.indexOf('--diff') >= 0) {
                 callback({
                     out: fs.readFileSync(path.join(formatFilesPath, outputFileName), 'utf8'),
-                    source: 'stdout'
+                    source: 'stdout',
                 });
             }
         });
@@ -112,13 +108,13 @@ suite('Formatting - General', () => {
         formatter: AutoPep8Formatter | BlackFormatter | YapfFormatter,
         formattedContents: string,
         fileToFormat: string,
-        outputFileName: string
+        outputFileName: string,
     ) {
         const textDocument = await workspace.openTextDocument(fileToFormat);
         const textEditor = await window.showTextDocument(textDocument);
         const options = {
             insertSpaces: textEditor.options.insertSpaces! as boolean,
-            tabSize: textEditor.options.tabSize! as number
+            tabSize: textEditor.options.tabSize! as number,
         };
 
         await injectFormatOutput(outputFileName);
@@ -132,30 +128,30 @@ suite('Formatting - General', () => {
 
     test('AutoPep8', async function () {
         // https://github.com/microsoft/vscode-python/issues/12564
-        // tslint:disable-next-line: no-invalid-this
+
         return this.skip();
         await testFormatting(
             new AutoPep8Formatter(ioc.serviceContainer),
             formattedAutoPep8,
             autoPep8FileToFormat,
-            'autopep8.output'
+            'autopep8.output',
         );
     });
-    // tslint:disable-next-line:no-function-expression
+
     test('Black', async function () {
         // https://github.com/microsoft/vscode-python/issues/12564
-        // tslint:disable-next-line: no-invalid-this
+
         return this.skip();
         if (!(await formattingTestIsBlackSupported())) {
             // Skip for versions of python below 3.6, as Black doesn't support them at all.
-            // tslint:disable-next-line:no-invalid-this
+
             return this.skip();
         }
         await testFormatting(
             new BlackFormatter(ioc.serviceContainer),
             formattedBlack,
             blackFileToFormat,
-            'black.output'
+            'black.output',
         );
     });
     test('Yapf', async () =>

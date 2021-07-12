@@ -3,7 +3,6 @@
 
 import { Product } from '../types';
 
-// tslint:disable-next-line:variable-name
 export const ProductNames = new Map<Product, string>();
 ProductNames.set(Product.autopep8, 'autopep8');
 ProductNames.set(Product.bandit, 'bandit');
@@ -20,3 +19,5 @@ ProductNames.set(Product.pytest, 'pytest');
 ProductNames.set(Product.yapf, 'yapf');
 ProductNames.set(Product.rope, 'rope');
 ProductNames.set(Product.tensorboard, 'tensorboard');
+ProductNames.set(Product.torchProfilerInstallName, 'torch-tb-profiler');
+ProductNames.set(Product.torchProfilerImportName, 'torch_tb_profiler');

@@ -2,15 +2,21 @@
 // Licensed under the MIT License.
 
 import { injectable } from 'inversify';
+import { intersection } from 'lodash';
 import * as vscode from 'vscode';
-import { getVersionString, parseVersion } from '../common/utils/version';
+import { DiscoveryVariants } from '../common/experiments/groups';
+import { traceError } from '../common/logger';
+import { FileChangeType } from '../common/platform/fileSystemWatcher';
+import { Resource } from '../common/types';
 import {
     CONDA_ENV_FILE_SERVICE,
     CONDA_ENV_SERVICE,
     CURRENT_PATH_SERVICE,
+    GetInterpreterOptions,
     GLOBAL_VIRTUAL_ENV_SERVICE,
     IComponentAdapter,
     ICondaService,
+    ICondaLocatorService,
     IInterpreterLocatorHelper,
     IInterpreterLocatorProgressService,
     IInterpreterLocatorService,
@@ -25,64 +31,62 @@ import {
     WORKSPACE_VIRTUAL_ENV_SERVICE,
 } from '../interpreter/contracts';
 import { IPipEnvServiceHelper, IPythonInPathCommandProvider } from '../interpreter/locators/types';
-import { IServiceContainer, IServiceManager } from '../ioc/types';
-import {
-    PythonEnvInfo, PythonEnvKind, PythonReleaseLevel,
-} from './base/info';
-import { buildEnvInfo } from './base/info/env';
-import { ILocator, PythonLocatorQuery } from './base/locator';
+import { VirtualEnvironmentManager } from '../interpreter/virtualEnvs';
+import { IVirtualEnvironmentManager } from '../interpreter/virtualEnvs/types';
+import { IServiceManager } from '../ioc/types';
+import { PythonEnvInfo, PythonEnvKind, PythonEnvSource } from './base/info';
+import { IResolvingLocator, PythonLocatorQuery } from './base/locator';
+import { isMacDefaultPythonPath } from './base/locators/lowLevel/macDefaultLocator';
 import { getEnvs } from './base/locatorUtils';
-import { initializeExternalDependencies } from './common/externalDependencies';
+import { inExperiment, isParentPath } from './common/externalDependencies';
 import { PythonInterpreterLocatorService } from './discovery/locators';
 import { InterpreterLocatorHelper } from './discovery/locators/helpers';
 import { InterpreterLocatorProgressService } from './discovery/locators/progressService';
-import { CondaEnvironmentInfo } from './discovery/locators/services/conda';
+import { CondaEnvironmentInfo, isCondaEnvironment } from './discovery/locators/services/conda';
 import { CondaEnvFileService } from './discovery/locators/services/condaEnvFileService';
 import { CondaEnvService } from './discovery/locators/services/condaEnvService';
 import { CondaService } from './discovery/locators/services/condaService';
+import { CondaLocatorService } from './discovery/locators/services/condaLocatorService';
 import { CurrentPathService, PythonInPathCommandProvider } from './discovery/locators/services/currentPathService';
 import {
     GlobalVirtualEnvironmentsSearchPathProvider,
     GlobalVirtualEnvService,
 } from './discovery/locators/services/globalVirtualEnvService';
-import { InterpreterHashProvider } from './discovery/locators/services/hashProvider';
-import { InterpeterHashProviderFactory } from './discovery/locators/services/hashProviderFactory';
 import { InterpreterWatcherBuilder } from './discovery/locators/services/interpreterWatcherBuilder';
 import { KnownPathsService, KnownSearchPathsForInterpreters } from './discovery/locators/services/KnownPathsService';
 import { PipEnvService } from './discovery/locators/services/pipEnvService';
 import { PipEnvServiceHelper } from './discovery/locators/services/pipEnvServiceHelper';
 import { WindowsRegistryService } from './discovery/locators/services/windowsRegistryService';
-import { WindowsStoreInterpreter } from './discovery/locators/services/windowsStoreInterpreter';
+import { isWindowsStoreEnvironment } from './discovery/locators/services/windowsStoreLocator';
 import {
     WorkspaceVirtualEnvironmentsSearchPathProvider,
     WorkspaceVirtualEnvService,
 } from './discovery/locators/services/workspaceVirtualEnvService';
 import { WorkspaceVirtualEnvWatcherService } from './discovery/locators/services/workspaceVirtualEnvWatcherService';
 import { EnvironmentType, PythonEnvironment } from './info';
+import { toSemverLikeVersion } from './base/info/pythonVersion';
+import { PythonVersion } from './info/pythonVersion';
+import { IExtensionSingleActivationService } from '../activation/types';
+import { EnvironmentInfoServiceQueuePriority, getEnvironmentInfoService } from './info/environmentInfoService';
 
-const convertedKinds = new Map(Object.entries({
-    [PythonEnvKind.System]: EnvironmentType.System,
-    [PythonEnvKind.MacDefault]: EnvironmentType.System,
-    [PythonEnvKind.WindowsStore]: EnvironmentType.WindowsStore,
-    [PythonEnvKind.Pyenv]: EnvironmentType.Pyenv,
-    [PythonEnvKind.Conda]: EnvironmentType.Conda,
-    [PythonEnvKind.CondaBase]: EnvironmentType.Conda,
-    [PythonEnvKind.VirtualEnv]: EnvironmentType.VirtualEnv,
-    [PythonEnvKind.Pipenv]: EnvironmentType.Pipenv,
-    [PythonEnvKind.Venv]: EnvironmentType.Venv,
-}));
+const convertedKinds = new Map(
+    Object.entries({
+        [PythonEnvKind.System]: EnvironmentType.System,
+        [PythonEnvKind.MacDefault]: EnvironmentType.System,
+        [PythonEnvKind.WindowsStore]: EnvironmentType.WindowsStore,
+        [PythonEnvKind.Pyenv]: EnvironmentType.Pyenv,
+        [PythonEnvKind.Conda]: EnvironmentType.Conda,
+        [PythonEnvKind.CondaBase]: EnvironmentType.Conda,
+        [PythonEnvKind.VirtualEnv]: EnvironmentType.VirtualEnv,
+        [PythonEnvKind.Pipenv]: EnvironmentType.Pipenv,
+        [PythonEnvKind.Poetry]: EnvironmentType.Poetry,
+        [PythonEnvKind.Venv]: EnvironmentType.Venv,
+        [PythonEnvKind.VirtualEnvWrapper]: EnvironmentType.VirtualEnvWrapper,
+    }),
+);
 
 function convertEnvInfo(info: PythonEnvInfo): PythonEnvironment {
-    const {
-        name,
-        location,
-        executable,
-        arch,
-        kind,
-        searchLocation,
-        version,
-        distro,
-    } = info;
+    const { name, location, executable, arch, kind, version, distro } = info;
     const { filename, sysPrefix } = executable;
     const env: PythonEnvironment = {
         sysPrefix,
@@ -99,27 +103,16 @@ function convertEnvInfo(info: PythonEnvInfo): PythonEnvironment {
     }
     // Otherwise it stays Unknown.
 
-    if (searchLocation !== undefined) {
-        if (kind === PythonEnvKind.Pipenv) {
-            env.pipEnvWorkspaceFolder = searchLocation.fsPath;
-        }
-    }
-
     if (version !== undefined) {
         const { release, sysVersion } = version;
         if (release === undefined) {
-            const versionStr = `${getVersionString(version)}-final`;
-            env.version = parseVersion(versionStr);
             env.sysVersion = '';
         } else {
-            const { level, serial } = release;
-            const releaseStr = level === PythonReleaseLevel.Final
-                ? 'final'
-                : `${level}${serial}`;
-            const versionStr = `${getVersionString(version)}-${releaseStr}`;
-            env.version = parseVersion(versionStr);
             env.sysVersion = sysVersion;
         }
+
+        const semverLikeVersion: PythonVersion = toSemverLikeVersion(version);
+        env.version = semverLikeVersion;
     }
 
     if (distro !== undefined && distro.org !== '') {
@@ -131,140 +124,154 @@ function convertEnvInfo(info: PythonEnvInfo): PythonEnvironment {
     return env;
 }
 
-interface IPythonEnvironments extends ILocator {}
+export async function isComponentEnabled(): Promise<boolean> {
+    const results = await Promise.all([
+        inExperiment(DiscoveryVariants.discoverWithFileWatching),
+        inExperiment(DiscoveryVariants.discoveryWithoutFileWatching),
+    ]);
+    return results.includes(true);
+}
+
+interface IPythonEnvironments extends IResolvingLocator {}
 
 @injectable()
 class ComponentAdapter implements IComponentAdapter {
+    private readonly refreshing = new vscode.EventEmitter<void>();
+
+    private readonly refreshed = new vscode.EventEmitter<void>();
+
     constructor(
         // The adapter only wraps one thing: the component API.
         private readonly api: IPythonEnvironments,
-        // For now we effectively disable the component.
-        private readonly enabled = false,
     ) {}
 
-    // IInterpreterHelper
+    // For use in VirtualEnvironmentPrompt.activate()
 
-    // A result of `undefined` means "Fall back to the old code!"
-    public async getInterpreterInformation(pythonPath: string): Promise<undefined | Partial<PythonEnvironment>> {
-        if (!this.enabled) {
-            return undefined;
-        }
-        const env = await this.api.resolveEnv(pythonPath);
-        if (env === undefined) {
-            return undefined;
-        }
-        return convertEnvInfo(env);
+    // Call callback if an environment gets created within the resource provided.
+    public onDidCreate(resource: Resource, callback: () => void): vscode.Disposable {
+        const workspaceFolder = resource ? vscode.workspace.getWorkspaceFolder(resource) : undefined;
+        return this.api.onChanged((e) => {
+            if (!workspaceFolder || !e.searchLocation) {
+                return;
+            }
+            if (
+                e.type === FileChangeType.Created &&
+                isParentPath(e.searchLocation.fsPath, workspaceFolder.uri.fsPath)
+            ) {
+                callback();
+            }
+        });
     }
 
-    // A result of `undefined` means "Fall back to the old code!"
-    public async isMacDefaultPythonPath(pythonPath: string): Promise<boolean | undefined> {
-        if (!this.enabled) {
-            return undefined;
-        }
-        const env = await this.api.resolveEnv(pythonPath);
-        if (env === undefined) {
-            return undefined;
-        }
-        return env.kind === PythonEnvKind.MacDefault;
+    // Implements IInterpreterLocatorProgressHandler
+    public get onRefreshing(): vscode.Event<void> {
+        return this.refreshing.event;
     }
 
-    // IInterpreterService
+    public get onRefreshed(): vscode.Event<void> {
+        return this.refreshed.event;
+    }
+
+    // Implements IInterpreterHelper
+    public async getInterpreterInformation(pythonPath: string): Promise<Partial<PythonEnvironment> | undefined> {
+        const env = await this.api.resolveEnv(pythonPath);
+        return env ? convertEnvInfo(env) : undefined;
+    }
+
+    // eslint-disable-next-line class-methods-use-this
+    public async isMacDefaultPythonPath(pythonPath: string): Promise<boolean> {
+        // While `ComponentAdapter` represents how the component would be used in the rest of the
+        // extension, we cheat here for the sake of performance.  This is not a problem because when
+        // we start using the component's public API directly we will be dealing with `PythonEnvInfo`
+        // instead of just `pythonPath`.
+        return isMacDefaultPythonPath(pythonPath);
+    }
+
+    // Implements IInterpreterService
 
     // We use the same getInterpreters() here as for IInterpreterLocatorService.
-
-    // A result of `undefined` means "Fall back to the old code!"
-    public async getInterpreterDetails(
-        pythonPath: string,
-        resource?: vscode.Uri,
-    ): Promise<undefined | PythonEnvironment> {
-        if (!this.enabled) {
+    public async getInterpreterDetails(pythonPath: string): Promise<PythonEnvironment | undefined> {
+        const env = await this.api.resolveEnv(pythonPath);
+        if (!env) {
             return undefined;
         }
-        const info = buildEnvInfo({ executable: pythonPath });
-        if (resource !== undefined) {
-            const wsFolder = vscode.workspace.getWorkspaceFolder(resource);
-            if (wsFolder !== undefined) {
-                info.searchLocation = wsFolder.uri;
+        if (env?.executable.sysPrefix) {
+            const execInfoService = getEnvironmentInfoService();
+            const info = await execInfoService.getEnvironmentInfo(pythonPath, EnvironmentInfoServiceQueuePriority.High);
+            if (info) {
+                env.executable.sysPrefix = info.executable.sysPrefix;
+                env.version = info.version;
             }
-        }
-        const env = await this.api.resolveEnv(info);
-        if (env === undefined) {
-            return undefined;
         }
         return convertEnvInfo(env);
     }
 
-    // ICondaService
+    // Implements ICondaService
 
-    // A result of `undefined` means "Fall back to the old code!"
-    public async isCondaEnvironment(interpreterPath: string): Promise<boolean | undefined> {
-        if (!this.enabled) {
-            return undefined;
-        }
-        const env = await this.api.resolveEnv(interpreterPath);
-        if (env === undefined) {
-            return undefined;
-        }
-        return env.kind === PythonEnvKind.Conda;
+    // eslint-disable-next-line class-methods-use-this
+    public async isCondaEnvironment(interpreterPath: string): Promise<boolean> {
+        // While `ComponentAdapter` represents how the component would be used in the rest of the
+        // extension, we cheat here for the sake of performance.  This is not a problem because when
+        // we start using the component's public API directly we will be dealing with `PythonEnvInfo`
+        // instead of just `pythonPath`.
+        return isCondaEnvironment(interpreterPath);
     }
 
-    // A result of `undefined` means "Fall back to the old code!"
     public async getCondaEnvironment(interpreterPath: string): Promise<CondaEnvironmentInfo | undefined> {
-        if (!this.enabled) {
+        if (!(await isCondaEnvironment(interpreterPath))) {
+            // Undefined is expected here when the env is not Conda env.
             return undefined;
         }
+
+        // The API getCondaEnvironment() is not called automatically, unless user attempts to install or activate environments
+        // So calling resolveEnv() which although runs python unnecessarily, is not that expensive here.
         const env = await this.api.resolveEnv(interpreterPath);
-        if (env === undefined) {
+
+        if (!env) {
             return undefined;
         }
-        if (env.kind !== PythonEnvKind.Conda) {
-            return undefined;
-        }
-        if (env.name !== '') {
-            return { name: env.name, path: '' };
-        }
-        // else
-        return { name: '', path: env.location };
+
+        return { name: env.name, path: env.location };
     }
 
-    // IWindowsStoreInterpreter
-
-    // A result of `undefined` means "Fall back to the old code!"
-    public async isWindowsStoreInterpreter(pythonPath: string): Promise<boolean | undefined> {
-        if (!this.enabled) {
-            return undefined;
-        }
-        const env = await this.api.resolveEnv(pythonPath);
-        if (env === undefined) {
-            return undefined;
-        }
-        return env.kind === PythonEnvKind.WindowsStore;
+    // eslint-disable-next-line class-methods-use-this
+    public async isWindowsStoreInterpreter(pythonPath: string): Promise<boolean> {
+        // Eventually we won't be calling 'isWindowsStoreInterpreter' in the component adapter, so we won't
+        // need to use 'isWindowsStoreEnvironment' directly here. This is just a temporary implementation.
+        return isWindowsStoreEnvironment(pythonPath);
     }
 
-    // IInterpreterLocatorService
-
-    // A result of `undefined` means "Fall back to the old code!"
-    public get hasInterpreters(): Promise<boolean | undefined> {
-        if (!this.enabled) {
-            return Promise.resolve(undefined);
-        }
+    // Implements IInterpreterLocatorService
+    public get hasInterpreters(): Promise<boolean> {
         const iterator = this.api.iterEnvs();
         return iterator.next().then((res) => !res.done);
     }
 
-    // A result of `undefined` means "Fall back to the old code!"
     public async getInterpreters(
         resource?: vscode.Uri,
-        // Currently we have no plans to support GetInterpreterLocatorOptions:
-        // {
-        //     ignoreCache?: boolean
-        //     onSuggestion?: boolean;
-        // }
-    ): Promise<PythonEnvironment[] | undefined> {
-        if (!this.enabled) {
-            return undefined;
-        }
-        const query: PythonLocatorQuery = {};
+        options?: GetInterpreterOptions,
+        source?: PythonEnvSource[],
+    ): Promise<PythonEnvironment[]> {
+        // Notify locators are locating.
+        this.refreshing.fire();
+
+        const legacyEnvs = await this.getInterpretersViaAPI(resource, options, source).catch((ex) => {
+            traceError('Fetching environments via the new API failed', ex);
+            return <PythonEnvironment[]>[];
+        });
+
+        // Notify all locators have completed locating. Note it's crucial to notify this even when getInterpretersViaAPI
+        // fails, to ensure "Python extension loading..." text disappears.
+        this.refreshed.fire();
+        return legacyEnvs;
+    }
+
+    private async getInterpretersViaAPI(
+        resource?: vscode.Uri,
+        options?: GetInterpreterOptions,
+        source?: PythonEnvSource[],
+    ): Promise<PythonEnvironment[]> {
+        const query: PythonLocatorQuery = { ignoreCache: options?.ignoreCache };
         if (resource !== undefined) {
             const wsFolder = vscode.workspace.getWorkspaceFolder(resource);
             if (wsFolder !== undefined) {
@@ -276,113 +283,132 @@ class ComponentAdapter implements IComponentAdapter {
         }
 
         const iterator = this.api.iterEnvs(query);
+        let envs = await getEnvs(iterator);
+        if (source) {
+            envs = envs.filter((env) => intersection(source, env.source).length > 0);
+        }
+
+        return envs.map(convertEnvInfo);
+    }
+
+    public async getWorkspaceVirtualEnvInterpreters(
+        resource: vscode.Uri,
+        options?: { ignoreCache?: boolean },
+    ): Promise<PythonEnvironment[]> {
+        const workspaceFolder = vscode.workspace.getWorkspaceFolder(resource);
+        if (!workspaceFolder) {
+            return [];
+        }
+        const query: PythonLocatorQuery = {
+            searchLocations: {
+                roots: [workspaceFolder.uri],
+            },
+            ignoreCache: options?.ignoreCache,
+        };
+        const iterator = this.api.iterEnvs(query);
         const envs = await getEnvs(iterator);
         return envs.map(convertEnvInfo);
     }
+
+    // Implements IInterpreterLocatorService (for WINDOWS_REGISTRY_SERVICE).
+
+    public async getWinRegInterpreters(resource: Resource): Promise<PythonEnvironment[]> {
+        return this.getInterpreters(resource, undefined, [PythonEnvSource.WindowsRegistry]);
+    }
 }
 
-export function registerLegacyDiscoveryForIOC(
-    serviceManager: IServiceManager,
-): void {
-    serviceManager.addSingleton<IInterpreterLocatorHelper>(IInterpreterLocatorHelper, InterpreterLocatorHelper);
-    serviceManager.addSingleton<IInterpreterLocatorService>(
-        IInterpreterLocatorService,
-        PythonInterpreterLocatorService,
-        INTERPRETER_LOCATOR_SERVICE,
-    );
-    serviceManager.addSingleton<IInterpreterLocatorProgressService>(
-        IInterpreterLocatorProgressService,
-        InterpreterLocatorProgressService,
-    );
-    serviceManager.addSingleton<IInterpreterLocatorService>(
-        IInterpreterLocatorService,
-        CondaEnvFileService,
-        CONDA_ENV_FILE_SERVICE,
-    );
-    serviceManager.addSingleton<IInterpreterLocatorService>(
-        IInterpreterLocatorService,
-        CondaEnvService,
-        CONDA_ENV_SERVICE,
-    );
-    serviceManager.addSingleton<IInterpreterLocatorService>(
-        IInterpreterLocatorService,
-        CurrentPathService,
-        CURRENT_PATH_SERVICE,
-    );
-    serviceManager.addSingleton<IInterpreterLocatorService>(
-        IInterpreterLocatorService,
-        GlobalVirtualEnvService,
-        GLOBAL_VIRTUAL_ENV_SERVICE,
-    );
-    serviceManager.addSingleton<IInterpreterLocatorService>(
-        IInterpreterLocatorService,
-        WorkspaceVirtualEnvService,
-        WORKSPACE_VIRTUAL_ENV_SERVICE,
-    );
-    serviceManager.addSingleton<IInterpreterLocatorService>(IInterpreterLocatorService, PipEnvService, PIPENV_SERVICE);
-
-    serviceManager.addSingleton<IInterpreterLocatorService>(
-        IInterpreterLocatorService,
-        WindowsRegistryService,
-        WINDOWS_REGISTRY_SERVICE,
-    );
-    serviceManager.addSingleton<IInterpreterLocatorService>(
-        IInterpreterLocatorService,
-        KnownPathsService,
-        KNOWN_PATH_SERVICE,
-    );
+export async function registerLegacyDiscoveryForIOC(serviceManager: IServiceManager): Promise<void> {
+    const inExp = await isComponentEnabled().catch((ex) => {
+        // This is mainly to support old tests, where IExperimentService was registered
+        // out of sequence / or not registered, so this throws an error. But we do not
+        // care about that error as we don't care about IExperimentService in old tests.
+        // But if this fails in other cases, it's a major error. Hence log it anyways.
+        traceError('Failed to not register old code when in Discovery experiment', ex);
+        return false;
+    });
+    if (!inExp) {
+        serviceManager.addSingleton<IInterpreterLocatorHelper>(IInterpreterLocatorHelper, InterpreterLocatorHelper);
+        serviceManager.addSingleton<IInterpreterLocatorService>(
+            IInterpreterLocatorService,
+            PythonInterpreterLocatorService,
+            INTERPRETER_LOCATOR_SERVICE,
+        );
+        serviceManager.addSingleton<IInterpreterLocatorService>(
+            IInterpreterLocatorService,
+            CondaEnvFileService,
+            CONDA_ENV_FILE_SERVICE,
+        );
+        serviceManager.addSingleton<IInterpreterLocatorService>(
+            IInterpreterLocatorService,
+            CondaEnvService,
+            CONDA_ENV_SERVICE,
+        );
+        serviceManager.addSingleton<IInterpreterLocatorService>(
+            IInterpreterLocatorService,
+            GlobalVirtualEnvService,
+            GLOBAL_VIRTUAL_ENV_SERVICE,
+        );
+        serviceManager.addSingleton<IVirtualEnvironmentsSearchPathProvider>(
+            IVirtualEnvironmentsSearchPathProvider,
+            GlobalVirtualEnvironmentsSearchPathProvider,
+            'global',
+        );
+        serviceManager.addSingleton<IInterpreterLocatorService>(
+            IInterpreterLocatorService,
+            KnownPathsService,
+            KNOWN_PATH_SERVICE,
+        );
+        serviceManager.addSingleton<IKnownSearchPathsForInterpreters>(
+            IKnownSearchPathsForInterpreters,
+            KnownSearchPathsForInterpreters,
+        );
+        serviceManager.addSingleton<IInterpreterLocatorProgressService>(
+            IInterpreterLocatorProgressService,
+            InterpreterLocatorProgressService,
+        );
+        serviceManager.addBinding(IInterpreterLocatorProgressService, IExtensionSingleActivationService);
+        serviceManager.addSingleton<IInterpreterLocatorService>(
+            IInterpreterLocatorService,
+            WorkspaceVirtualEnvService,
+            WORKSPACE_VIRTUAL_ENV_SERVICE,
+        );
+        serviceManager.addSingleton<IVirtualEnvironmentsSearchPathProvider>(
+            IVirtualEnvironmentsSearchPathProvider,
+            WorkspaceVirtualEnvironmentsSearchPathProvider,
+            'workspace',
+        );
+        serviceManager.addSingleton<IInterpreterWatcherBuilder>(IInterpreterWatcherBuilder, InterpreterWatcherBuilder);
+        serviceManager.add<IInterpreterWatcher>(
+            IInterpreterWatcher,
+            WorkspaceVirtualEnvWatcherService,
+            WORKSPACE_VIRTUAL_ENV_SERVICE,
+        );
+        serviceManager.addSingleton<IInterpreterLocatorService>(
+            IInterpreterLocatorService,
+            CurrentPathService,
+            CURRENT_PATH_SERVICE,
+        );
+        serviceManager.addSingleton<IPythonInPathCommandProvider>(
+            IPythonInPathCommandProvider,
+            PythonInPathCommandProvider,
+        );
+        serviceManager.addSingleton<IInterpreterLocatorService>(
+            IInterpreterLocatorService,
+            WindowsRegistryService,
+            WINDOWS_REGISTRY_SERVICE,
+        );
+        serviceManager.addSingleton<IVirtualEnvironmentManager>(IVirtualEnvironmentManager, VirtualEnvironmentManager);
+        serviceManager.addSingleton<IInterpreterLocatorService>(
+            IInterpreterLocatorService,
+            PipEnvService,
+            PIPENV_SERVICE,
+        );
+        serviceManager.addSingleton<IPipEnvServiceHelper>(IPipEnvServiceHelper, PipEnvServiceHelper);
+        serviceManager.addSingleton<ICondaLocatorService>(ICondaLocatorService, CondaLocatorService);
+    }
     serviceManager.addSingleton<ICondaService>(ICondaService, CondaService);
-    serviceManager.addSingleton<IPipEnvServiceHelper>(IPipEnvServiceHelper, PipEnvServiceHelper);
-    serviceManager.addSingleton<IPythonInPathCommandProvider>(
-        IPythonInPathCommandProvider,
-        PythonInPathCommandProvider,
-    );
-
-    serviceManager.add<IInterpreterWatcher>(
-        IInterpreterWatcher,
-        WorkspaceVirtualEnvWatcherService,
-        WORKSPACE_VIRTUAL_ENV_SERVICE,
-    );
-    serviceManager.addSingleton<WindowsStoreInterpreter>(WindowsStoreInterpreter, WindowsStoreInterpreter);
-    serviceManager.addSingleton<InterpreterHashProvider>(InterpreterHashProvider, InterpreterHashProvider);
-    serviceManager.addSingleton<InterpeterHashProviderFactory>(
-        InterpeterHashProviderFactory,
-        InterpeterHashProviderFactory,
-    );
-    serviceManager.addSingleton<IVirtualEnvironmentsSearchPathProvider>(
-        IVirtualEnvironmentsSearchPathProvider,
-        GlobalVirtualEnvironmentsSearchPathProvider,
-        'global',
-    );
-    serviceManager.addSingleton<IVirtualEnvironmentsSearchPathProvider>(
-        IVirtualEnvironmentsSearchPathProvider,
-        WorkspaceVirtualEnvironmentsSearchPathProvider,
-        'workspace',
-    );
-    serviceManager.addSingleton<IKnownSearchPathsForInterpreters>(
-        IKnownSearchPathsForInterpreters,
-        KnownSearchPathsForInterpreters,
-    );
-    serviceManager.addSingleton<IInterpreterWatcherBuilder>(IInterpreterWatcherBuilder, InterpreterWatcherBuilder);
 }
 
-export function registerNewDiscoveryForIOC(
-    serviceManager: IServiceManager,
-    api:IPythonEnvironments,
-): void {
+export function registerNewDiscoveryForIOC(serviceManager: IServiceManager, api: IPythonEnvironments): void {
     serviceManager.addSingletonInstance<IComponentAdapter>(IComponentAdapter, new ComponentAdapter(api));
-}
-
-/**
- * This is here to support old tests.
- * @deprecated
- */
-export function registerForIOC(
-    serviceManager: IServiceManager,
-    serviceContainer: IServiceContainer,
-    api:IPythonEnvironments,
-): void{
-    registerLegacyDiscoveryForIOC(serviceManager);
-    initializeExternalDependencies(serviceContainer);
-    registerNewDiscoveryForIOC(serviceManager, api);
 }

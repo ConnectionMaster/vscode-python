@@ -7,16 +7,18 @@ import { IServiceContainer } from '../../ioc/types';
 import { NOSETEST_PROVIDER } from '../common/constants';
 import { Options } from '../common/runner';
 import {
+    IArgumentsHelper,
+    IArgumentsService,
     ITestDebugLauncher,
     ITestManager,
+    ITestManagerRunner,
     ITestResultsService,
     ITestRunner,
     IXUnitParser,
     LaunchOptions,
     TestRunOptions,
-    Tests
+    Tests,
 } from '../common/types';
-import { IArgumentsHelper, IArgumentsService, ITestManagerRunner } from '../types';
 
 const WITH_XUNIT = '--with-xunit';
 const XUNIT_FILE = '--xunit-file';
@@ -38,7 +40,7 @@ export class TestManagerRunner implements ITestManagerRunner {
     public async runTest(
         testResultsService: ITestResultsService,
         options: TestRunOptions,
-        _: ITestManager
+        _: ITestManager,
     ): Promise<Tests> {
         let testPaths: string[] = [];
         if (options.testsToRun && options.testsToRun.testFolder) {
@@ -80,23 +82,22 @@ export class TestManagerRunner implements ITestManagerRunner {
                     args: debuggerArgs,
                     token: options.token,
                     outChannel: options.outChannel,
-                    testProvider: NOSETEST_PROVIDER
+                    testProvider: NOSETEST_PROVIDER,
                 };
                 await debugLauncher.launchDebugger(launchOptions);
             } else {
                 const runOptions: Options = {
-                    args: testArgs.concat(testPaths),
+                    args: testArgs,
                     cwd: options.cwd,
                     outChannel: options.outChannel,
                     token: options.token,
-                    workspaceFolder: options.workspaceFolder
+                    workspaceFolder: options.workspaceFolder,
                 };
                 await this.testRunner.run(NOSETEST_PROVIDER, runOptions);
             }
 
-            return options.debug
-                ? options.tests
-                : await this.updateResultsFromLogFiles(options.tests, xmlLogFile, testResultsService);
+            // Promise must resolve before return as result file will be deleted in finally block.
+            return await this.updateResultsFromLogFiles(options.tests, xmlLogFile, testResultsService);
         } catch (ex) {
             return Promise.reject<Tests>(ex);
         } finally {
@@ -107,7 +108,7 @@ export class TestManagerRunner implements ITestManagerRunner {
     private async updateResultsFromLogFiles(
         tests: Tests,
         outputXmlFile: string,
-        testResultsService: ITestResultsService
+        testResultsService: ITestResultsService,
     ): Promise<Tests> {
         await this.xUnitParser.updateResultsFromXmlLogFile(tests, outputXmlFile);
         testResultsService.updateResults(tests);

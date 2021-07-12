@@ -1,8 +1,7 @@
 import { inject, injectable } from 'inversify';
-import * as md5 from 'md5';
 import * as path from 'path';
 import { Disposable, Event, EventEmitter, Uri } from 'vscode';
-import '../../client/common/extensions';
+import '../common/extensions';
 import { IDocumentManager, IWorkspaceService } from '../common/application/types';
 import { DeprecatePythonPath } from '../common/experiments/groups';
 import { traceError } from '../common/logger';
@@ -12,44 +11,49 @@ import { IPythonExecutionFactory } from '../common/process/types';
 import {
     IConfigurationService,
     IDisposableRegistry,
-    IExperimentsManager,
+    IExperimentService,
     IInterpreterPathService,
     IPersistentState,
     IPersistentStateFactory,
-    Resource
+    Resource,
 } from '../common/types';
 import { sleep } from '../common/utils/async';
 import { IServiceContainer } from '../ioc/types';
-import { InterpeterHashProviderFactory } from '../pythonEnvironments/discovery/locators/services/hashProviderFactory';
 import { EnvironmentType, PythonEnvironment } from '../pythonEnvironments/info';
-import { captureTelemetry } from '../telemetry';
+import { sendTelemetryEvent } from '../telemetry';
 import { EventName } from '../telemetry/constants';
 import {
+    GetInterpreterOptions,
     IComponentAdapter,
     IInterpreterDisplay,
     IInterpreterHelper,
     IInterpreterLocatorService,
     IInterpreterService,
-    INTERPRETER_LOCATOR_SERVICE
+    INTERPRETER_LOCATOR_SERVICE,
 } from './contracts';
-import { IInterpreterHashProviderFactory } from './locators/types';
 import { IVirtualEnvironmentManager } from './virtualEnvs/types';
+import { getInterpreterHash } from '../pythonEnvironments/discovery/locators/services/hashProvider';
+import { inDiscoveryExperiment } from '../common/experiments/helpers';
+import { StopWatch } from '../common/utils/stopWatch';
+import { PythonVersion } from '../pythonEnvironments/info/pythonVersion';
 
-const EXPITY_DURATION = 24 * 60 * 60 * 1000;
+const EXPIRY_DURATION = 24 * 60 * 60 * 1000;
 
-export type GetInterpreterOptions = {
-    onSuggestion?: boolean;
-};
-
-// The parts of IComponentAdapter used here.
-interface IComponent {
-    getInterpreterDetails(pythonPath: string): Promise<undefined | PythonEnvironment>;
-}
+type StoredPythonEnvironment = PythonEnvironment & { store?: boolean };
 
 @injectable()
 export class InterpreterService implements Disposable, IInterpreterService {
     public get hasInterpreters(): Promise<boolean> {
-        return this.locator.hasInterpreters;
+        return inDiscoveryExperiment(this.experimentService).then((inExp) => {
+            if (inExp) {
+                return this.pyenvs.hasInterpreters;
+            }
+            const locator = this.serviceContainer.get<IInterpreterLocatorService>(
+                IInterpreterLocatorService,
+                INTERPRETER_LOCATOR_SERVICE,
+            );
+            return locator.hasInterpreters;
+        });
     }
 
     public get onDidChangeInterpreter(): Event<void> {
@@ -59,57 +63,63 @@ export class InterpreterService implements Disposable, IInterpreterService {
     public get onDidChangeInterpreterInformation(): Event<PythonEnvironment> {
         return this.didChangeInterpreterInformation.event;
     }
+
     public get onDidChangeInterpreterConfiguration(): Event<Uri | undefined> {
         return this.didChangeInterpreterConfigurationEmitter.event;
     }
-    public _pythonPathSetting: string = '';
+
+    public _pythonPathSetting = '';
+
     private readonly didChangeInterpreterConfigurationEmitter = new EventEmitter<Uri | undefined>();
-    private readonly locator: IInterpreterLocatorService;
+
     private readonly persistentStateFactory: IPersistentStateFactory;
+
     private readonly configService: IConfigurationService;
+
     private readonly interpreterPathService: IInterpreterPathService;
-    private readonly experiments: IExperimentsManager;
+
+    private readonly experimentsManager: IExperimentService;
+
     private readonly didChangeInterpreterEmitter = new EventEmitter<void>();
+
     private readonly didChangeInterpreterInformation = new EventEmitter<PythonEnvironment>();
+
     private readonly inMemoryCacheOfDisplayNames = new Map<string, string>();
+
     private readonly updatedInterpreters = new Set<string>();
 
     constructor(
         @inject(IServiceContainer) private serviceContainer: IServiceContainer,
-        @inject(InterpeterHashProviderFactory) private readonly hashProviderFactory: IInterpreterHashProviderFactory,
-        @inject(IComponentAdapter) private readonly pyenvs: IComponent
+        @inject(IComponentAdapter) private readonly pyenvs: IComponentAdapter,
+        @inject(IExperimentService) private readonly experimentService: IExperimentService,
     ) {
-        this.locator = serviceContainer.get<IInterpreterLocatorService>(
-            IInterpreterLocatorService,
-            INTERPRETER_LOCATOR_SERVICE
-        );
         this.persistentStateFactory = this.serviceContainer.get<IPersistentStateFactory>(IPersistentStateFactory);
         this.configService = this.serviceContainer.get<IConfigurationService>(IConfigurationService);
         this.interpreterPathService = this.serviceContainer.get<IInterpreterPathService>(IInterpreterPathService);
-        this.experiments = this.serviceContainer.get<IExperimentsManager>(IExperimentsManager);
+        this.experimentsManager = this.serviceContainer.get<IExperimentService>(IExperimentService);
     }
 
-    public async refresh(resource?: Uri) {
+    public async refresh(resource?: Uri): Promise<void> {
         const interpreterDisplay = this.serviceContainer.get<IInterpreterDisplay>(IInterpreterDisplay);
         return interpreterDisplay.refresh(resource);
     }
 
-    public initialize() {
+    public initialize(): void {
         const disposables = this.serviceContainer.get<Disposable[]>(IDisposableRegistry);
         const documentManager = this.serviceContainer.get<IDocumentManager>(IDocumentManager);
         disposables.push(
             documentManager.onDidChangeActiveTextEditor((e) =>
-                e && e.document ? this.refresh(e.document.uri) : undefined
-            )
+                e && e.document ? this.refresh(e.document.uri) : undefined,
+            ),
         );
         const workspaceService = this.serviceContainer.get<IWorkspaceService>(IWorkspaceService);
         const pySettings = this.configService.getSettings();
         this._pythonPathSetting = pySettings.pythonPath;
-        if (this.experiments.inExperiment(DeprecatePythonPath.experiment)) {
+        if (this.experimentsManager.inExperimentSync(DeprecatePythonPath.experiment)) {
             disposables.push(
                 this.interpreterPathService.onDidChange((i) => {
                     this._onConfigChanged(i.uri);
-                })
+                }),
             );
         } else {
             const workspacesUris: (Uri | undefined)[] = workspaceService.hasWorkspaceFolders
@@ -117,35 +127,57 @@ export class InterpreterService implements Disposable, IInterpreterService {
                 : [undefined];
             const disposable = workspaceService.onDidChangeConfiguration((e) => {
                 const workspaceUriIndex = workspacesUris.findIndex((uri) =>
-                    e.affectsConfiguration('python.pythonPath', uri)
+                    e.affectsConfiguration('python.pythonPath', uri),
                 );
                 const workspaceUri = workspaceUriIndex === -1 ? undefined : workspacesUris[workspaceUriIndex];
                 this._onConfigChanged(workspaceUri);
             });
             disposables.push(disposable);
         }
-        this.experiments.sendTelemetryIfInExperiment(DeprecatePythonPath.control);
     }
 
-    @captureTelemetry(EventName.PYTHON_INTERPRETER_DISCOVERY, { locator: 'all' }, true)
     public async getInterpreters(resource?: Uri, options?: GetInterpreterOptions): Promise<PythonEnvironment[]> {
-        const interpreters = await this.locator.getInterpreters(resource, options);
+        let environments: PythonEnvironment[] = [];
+        const stopWatch = new StopWatch();
+        if (await inDiscoveryExperiment(this.experimentService)) {
+            environments = await this.pyenvs.getInterpreters(resource, options);
+        } else {
+            const locator = this.serviceContainer.get<IInterpreterLocatorService>(
+                IInterpreterLocatorService,
+                INTERPRETER_LOCATOR_SERVICE,
+            );
+            environments = await locator.getInterpreters(resource, options);
+        }
+
+        sendTelemetryEvent(EventName.PYTHON_INTERPRETER_DISCOVERY, stopWatch.elapsedTime, {
+            locator: 'all',
+            interpreters: environments?.length ?? 0,
+        });
+
         await Promise.all(
-            interpreters
+            environments
                 .filter((item) => !item.displayName)
                 .map(async (item) => {
-                    item.displayName = await this.getDisplayName(item, resource);
+                    item.displayName = await this.getDisplayName(item, resource, options?.ignoreCache);
                     // Keep information up to date with latest details.
                     if (!item.cachedEntry) {
                         this.updateCachedInterpreterInformation(item, resource).ignoreErrors();
                     }
-                })
+                }),
         );
-        return interpreters;
+        return environments;
     }
 
     public dispose(): void {
-        this.locator.dispose();
+        inDiscoveryExperiment(this.experimentService).then((inExp) => {
+            if (!inExp) {
+                const locator = this.serviceContainer.get<IInterpreterLocatorService>(
+                    IInterpreterLocatorService,
+                    INTERPRETER_LOCATOR_SERVICE,
+                );
+                locator.dispose();
+            }
+        });
         this.didChangeInterpreterEmitter.dispose();
         this.didChangeInterpreterInformation.dispose();
     }
@@ -161,14 +193,25 @@ export class InterpreterService implements Disposable, IInterpreterService {
             : undefined;
         // Python path is invalid or python isn't installed.
         if (!fullyQualifiedPath) {
-            return;
+            return undefined;
         }
 
         return this.getInterpreterDetails(fullyQualifiedPath, resource);
     }
-    public async getInterpreterDetails(pythonPath: string, resource?: Uri): Promise<PythonEnvironment | undefined> {
-        const info = await this.pyenvs.getInterpreterDetails(pythonPath);
-        if (info !== undefined) {
+
+    public async getInterpreterDetails(
+        pythonPath: string,
+        resource?: Uri,
+    ): Promise<StoredPythonEnvironment | undefined> {
+        if (await inDiscoveryExperiment(this.experimentService)) {
+            const info = await this.pyenvs.getInterpreterDetails(pythonPath);
+            if (!info) {
+                return undefined;
+            }
+            if (!info.displayName) {
+                // Set display name for the environment returned by component if it's not set (this should eventually go away)
+                info.displayName = await this.getDisplayName(info, resource);
+            }
             return info;
         }
 
@@ -179,7 +222,7 @@ export class InterpreterService implements Disposable, IInterpreterService {
             pythonPath = await pythonExecutionService.getExecutablePath().catch(() => '');
             // Python path is invalid or python isn't installed.
             if (!pythonPath) {
-                return;
+                return undefined;
             }
         }
 
@@ -191,7 +234,7 @@ export class InterpreterService implements Disposable, IInterpreterService {
         const fs = this.serviceContainer.get<IFileSystem>(IFileSystem);
 
         // Don't want for all interpreters are collected.
-        // Try to collect the infromation manually, that's faster.
+        // Try to collect the information manually, that's faster.
         // Get from which ever comes first.
         const option1 = (async () => {
             const result = this.collectInterpreterDetails(pythonPath, resource);
@@ -204,9 +247,8 @@ export class InterpreterService implements Disposable, IInterpreterService {
             const interpreters = await this.getInterpreters(resource);
             const found = interpreters.find((i) => fs.arePathsSame(i.path, pythonPath));
             if (found) {
-                // Cache the interpreter info, only if we get the data from interpretr list.
-                // tslint:disable-next-line:no-any
-                (found as any).__store = true;
+                // Cache the interpreter info, only if we get the data from interpreter list.
+                (found as StoredPythonEnvironment).store = true;
                 return found;
             }
             // Use option1 as a fallback.
@@ -221,12 +263,12 @@ export class InterpreterService implements Disposable, IInterpreterService {
             interpreterInfo = both[0] ? both[0] : both[1];
         }
 
-        // tslint:disable-next-line:no-any
-        if (interpreterInfo && (interpreterInfo as any).__store) {
+        if (interpreterInfo && (interpreterInfo as StoredPythonEnvironment).store) {
             await this.updateCachedInterpreterInformation(interpreterInfo, resource);
         }
         return interpreterInfo;
     }
+
     /**
      * Gets the display name of an interpreter.
      * The format is `Python <Version> <bitness> (<env name>: <env type>)`
@@ -236,20 +278,23 @@ export class InterpreterService implements Disposable, IInterpreterService {
      * @returns {string}
      * @memberof InterpreterService
      */
-    public async getDisplayName(info: Partial<PythonEnvironment>, resource?: Uri): Promise<string> {
-        // faster than calculating file has agian and again, only when deailing with cached items.
-        if (!info.cachedEntry && info.path && this.inMemoryCacheOfDisplayNames.has(info.path)) {
+    public async getDisplayName(
+        info: Partial<PythonEnvironment>,
+        resource?: Uri,
+        ignoreCache = false,
+    ): Promise<string> {
+        // faster than calculating file has again and again, only when dealing with cached items.
+        if (!ignoreCache && !info.cachedEntry && info.path && this.inMemoryCacheOfDisplayNames.has(info.path)) {
             return this.inMemoryCacheOfDisplayNames.get(info.path)!;
         }
-        const fileHash = (info.path ? await this.getInterepreterFileHash(info.path).catch(() => '') : '') || '';
-        // Do not include dipslay name into hash as that changes.
-        const interpreterHash = `${fileHash}-${md5(JSON.stringify({ ...info, displayName: '' }))}`;
+        const interpreterKey = info.path ?? '';
         const store = this.persistentStateFactory.createGlobalPersistentState<{ hash: string; displayName: string }>(
             `${info.path}.interpreter.displayName.v7`,
             undefined,
-            EXPITY_DURATION
+            EXPIRY_DURATION,
         );
-        if (store.value && store.value.hash === interpreterHash && store.value.displayName) {
+
+        if (!ignoreCache && store.value && store.value.hash === interpreterKey && store.value.displayName) {
             this.inMemoryCacheOfDisplayNames.set(info.path!, store.value.displayName);
             return store.value.displayName;
         }
@@ -258,26 +303,28 @@ export class InterpreterService implements Disposable, IInterpreterService {
 
         // If dealing with cached entry, then do not store the display name in cache.
         if (!info.cachedEntry) {
-            await store.updateValue({ displayName, hash: interpreterHash });
+            await store.updateValue({ displayName, hash: interpreterKey });
             this.inMemoryCacheOfDisplayNames.set(info.path!, displayName);
         }
 
         return displayName;
     }
+
     public async getInterpreterCache(
-        pythonPath: string
+        pythonPath: string,
     ): Promise<IPersistentState<{ fileHash: string; info?: PythonEnvironment }>> {
-        const fileHash = (pythonPath ? await this.getInterepreterFileHash(pythonPath).catch(() => '') : '') || '';
+        const fileHash = (pythonPath ? await getInterpreterHash(pythonPath).catch(() => '') : '') || '';
         const store = this.persistentStateFactory.createGlobalPersistentState<{
             fileHash: string;
             info?: PythonEnvironment;
-        }>(`${pythonPath}.interpreter.Details.v7`, undefined, EXPITY_DURATION);
+        }>(`${pythonPath}.interpreter.Details.v7`, undefined, EXPIRY_DURATION);
         if (!store.value || store.value.fileHash !== fileHash) {
             await store.updateValue({ fileHash });
         }
         return store;
     }
-    public _onConfigChanged = (resource?: Uri) => {
+
+    public _onConfigChanged = (resource?: Uri): void => {
         this.didChangeInterpreterConfigurationEmitter.fire(resource);
         // Check if we actually changed our python path
         const pySettings = this.configService.getSettings(resource);
@@ -288,11 +335,7 @@ export class InterpreterService implements Disposable, IInterpreterService {
             interpreterDisplay.refresh().catch((ex) => traceError('Python Extension: display.refresh', ex));
         }
     };
-    protected async getInterepreterFileHash(pythonPath: string): Promise<string> {
-        return this.hashProviderFactory
-            .create({ pythonPath })
-            .then((provider) => provider.getInterpreterHash(pythonPath));
-    }
+
     protected async updateCachedInterpreterInformation(info: PythonEnvironment, resource: Resource): Promise<void> {
         const key = JSON.stringify(info);
         if (this.updatedInterpreters.has(key)) {
@@ -309,20 +352,28 @@ export class InterpreterService implements Disposable, IInterpreterService {
         await state.updateValue({ fileHash: state.value.fileHash, info });
         this.didChangeInterpreterInformation.fire(info);
     }
+
     protected async buildInterpreterDisplayName(info: Partial<PythonEnvironment>, resource?: Uri): Promise<string> {
         const displayNameParts: string[] = ['Python'];
         const envSuffixParts: string[] = [];
 
         if (info.version) {
-            displayNameParts.push(`${info.version.major}.${info.version.minor}.${info.version.patch}`);
+            displayNameParts.push(this.getVersionForDisplay(info.version));
         }
         if (info.architecture) {
             displayNameParts.push(getArchitectureDisplayName(info.architecture));
         }
-        if (!info.envName && info.path && info.envType && info.envType === EnvironmentType.Pipenv) {
+        if (
+            !info.envName &&
+            info.path &&
+            info.envType &&
+            info.envType === EnvironmentType.Pipenv &&
+            // We cannot access 'IVirtualEnvironmentManager' while in experiment.
+            !(await inDiscoveryExperiment(this.experimentService))
+        ) {
             // If we do not have the name of the environment, then try to get it again.
             // This can happen based on the context (i.e. resource).
-            // I.e. we can determine if an environment is PipEnv only when giving it the right workspacec path (i.e. resource).
+            // I.e. we can determine if an environment is PipEnv only when giving it the right workspace path (i.e. resource).
             const virtualEnvMgr = this.serviceContainer.get<IVirtualEnvironmentManager>(IVirtualEnvironmentManager);
             info.envName = await virtualEnvMgr.getEnvironmentName(info.path, resource);
         }
@@ -340,31 +391,64 @@ export class InterpreterService implements Disposable, IInterpreterService {
         const envSuffix = envSuffixParts.length === 0 ? '' : `(${envSuffixParts.join(': ')})`;
         return `${displayNameParts.join(' ')} ${envSuffix}`.trim();
     }
+
+    // eslint-disable-next-line class-methods-use-this
+    private getVersionForDisplay(version: PythonVersion): string {
+        // Exclude invalid -1 filler values.
+        const versionParts = [version.major, version.minor, version.patch].filter((value) => value > -1);
+
+        let preRelease = '';
+        if (version.prerelease.length > 0) {
+            switch (version.prerelease[0]) {
+                case 'alpha':
+                case 'a':
+                    preRelease = `a`;
+                    break;
+                case 'beta':
+                case 'b':
+                    preRelease = `b`;
+                    break;
+                case 'candidate':
+                case 'rc':
+                    preRelease = `rc`;
+                    break;
+                case 'final':
+                default:
+                    break;
+            }
+            if (preRelease !== '' && version.prerelease.length > 1) {
+                preRelease = `${preRelease}${version.prerelease.slice(1).join('')}`;
+            }
+        }
+        return `${versionParts.join('.')}${preRelease}`;
+    }
+
     private async collectInterpreterDetails(pythonPath: string, resource: Uri | undefined) {
         const interpreterHelper = this.serviceContainer.get<IInterpreterHelper>(IInterpreterHelper);
         const virtualEnvManager = this.serviceContainer.get<IVirtualEnvironmentManager>(IVirtualEnvironmentManager);
         const [info, type] = await Promise.all([
             interpreterHelper.getInterpreterInformation(pythonPath),
-            virtualEnvManager.getEnvironmentType(pythonPath)
+            virtualEnvManager.getEnvironmentType(pythonPath),
         ]);
         if (!info) {
-            return;
+            return undefined;
         }
         const details: Partial<PythonEnvironment> = {
             ...(info as PythonEnvironment),
             path: pythonPath,
-            envType: type
+            envType: type,
         };
 
         const envName =
             type === EnvironmentType.Unknown
                 ? undefined
                 : await virtualEnvManager.getEnvironmentName(pythonPath, resource);
-        const pthonInfo = {
+        const pythonInfo = {
             ...(details as PythonEnvironment),
-            envName
+            envName,
         };
-        pthonInfo.displayName = await this.getDisplayName(pthonInfo, resource);
-        return pthonInfo;
+        pythonInfo.displayName = await this.getDisplayName(pythonInfo, resource);
+
+        return pythonInfo;
     }
 }

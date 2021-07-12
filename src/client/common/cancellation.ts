@@ -33,7 +33,8 @@ export function createPromiseFromCancellation<T>(options: {
             return;
         }
         const complete = () => {
-            if (options.token!.isCancellationRequested) {
+            const optionsToken = options.token!; // NOSONAR
+            if (optionsToken.isCancellationRequested) {
                 if (options.cancelAction === 'resolve') {
                     return resolve(options.defaultValue);
                 }

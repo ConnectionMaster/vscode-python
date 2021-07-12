@@ -1,9 +1,10 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+/* eslint-disable class-methods-use-this */
+/* eslint-disable max-classes-per-file */
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
 'use strict';
-
-// tslint:disable:no-any
 
 import { expect, use } from 'chai';
 import * as chaiAsPromised from 'chai-as-promised';
@@ -16,7 +17,7 @@ import { DotNetLanguageServerFolderService } from '../../../client/activation/la
 import {
     ILanguageServerFolderService,
     ILanguageServerOutputChannel,
-    IPlatformData
+    IPlatformData,
 } from '../../../client/activation/types';
 import { ApplicationShell } from '../../../client/common/application/applicationShell';
 import { IApplicationShell, IWorkspaceService } from '../../../client/common/application/types';
@@ -31,7 +32,6 @@ import { MockOutputChannel } from '../../mockClasses';
 
 use(chaiAsPromised);
 
-// tslint:disable-next-line:max-func-body-length
 suite('Language Server Activation - Downloader', () => {
     let languageServerDownloader: LanguageServerDownloader;
     let folderService: TypeMoq.IMock<ILanguageServerFolderService>;
@@ -53,7 +53,7 @@ suite('Language Server Activation - Downloader', () => {
             undefined as any,
             undefined as any,
             workspaceService.object,
-            undefined as any
+            undefined as any,
         );
     });
 
@@ -73,13 +73,13 @@ suite('Language Server Activation - Downloader', () => {
             .returns(() => Promise.resolve(pkg))
             .verifiable(TypeMoq.Times.once());
 
-        const [uri, version, name] = await languageServerDownloader.getDownloadInfo(resource);
+        const { downloadUri, lsVersion, lsName } = await languageServerDownloader.getDownloadInfo(resource);
 
         folderService.verifyAll();
         workspaceService.verifyAll();
-        expect(uri).to.equal(pkg.uri);
-        expect(version).to.equal(pkg.version.raw);
-        expect(name).to.equal('ls');
+        expect(downloadUri).to.equal(pkg.uri);
+        expect(lsVersion).to.equal(pkg.version.raw);
+        expect(lsName).to.equal('ls');
     });
 
     test('Get download info - HTTPS without resource', async () => {
@@ -98,13 +98,13 @@ suite('Language Server Activation - Downloader', () => {
             .returns(() => Promise.resolve(pkg))
             .verifiable(TypeMoq.Times.once());
 
-        const [uri, version, name] = await languageServerDownloader.getDownloadInfo(undefined);
+        const { downloadUri, lsVersion, lsName } = await languageServerDownloader.getDownloadInfo(undefined);
 
         folderService.verifyAll();
         workspaceService.verifyAll();
-        expect(uri).to.equal(pkg.uri);
-        expect(version).to.equal(pkg.version.raw);
-        expect(name).to.equal('ls');
+        expect(downloadUri).to.equal(pkg.uri);
+        expect(lsVersion).to.equal(pkg.version.raw);
+        expect(lsName).to.equal('ls');
     });
 
     test('Get download info - HTTPS disabled', async () => {
@@ -123,31 +123,30 @@ suite('Language Server Activation - Downloader', () => {
             .returns(() => Promise.resolve(pkg))
             .verifiable(TypeMoq.Times.once());
 
-        const [uri, version, name] = await languageServerDownloader.getDownloadInfo(resource);
+        const { downloadUri, lsVersion, lsName } = await languageServerDownloader.getDownloadInfo(resource);
 
         folderService.verifyAll();
         workspaceService.verifyAll();
-        // tslint:disable-next-line:no-http-string
-        expect(uri).to.deep.equal('http://a.b.com/x/y/z/ls.nupkg');
-        expect(version).to.equal(pkg.version.raw);
-        expect(name).to.equal('ls');
+
+        expect(downloadUri).to.deep.equal('http://a.b.com/x/y/z/ls.nupkg');
+        expect(lsVersion).to.equal(pkg.version.raw);
+        expect(lsName).to.equal('ls');
     });
 
     test('Get download info - HTTP', async () => {
-        // tslint:disable-next-line:no-http-string
         const pkg = makePkgInfo('ls', 'http://a.b.com/x/y/z/ls.nupkg');
         folderService
             .setup((f) => f.getLatestLanguageServerVersion(resource))
             .returns(() => Promise.resolve(pkg))
             .verifiable(TypeMoq.Times.once());
 
-        const [uri, version, name] = await languageServerDownloader.getDownloadInfo(resource);
+        const { downloadUri, lsVersion, lsName } = await languageServerDownloader.getDownloadInfo(resource);
 
         folderService.verifyAll();
         workspaceService.verifyAll();
-        expect(uri).to.equal(pkg.uri);
-        expect(version).to.equal(pkg.version.raw);
-        expect(name).to.equal('ls');
+        expect(downloadUri).to.equal(pkg.uri);
+        expect(lsVersion).to.equal(pkg.version.raw);
+        expect(lsName).to.equal('ls');
     });
 
     test('Get download info - bogus URL', async () => {
@@ -157,13 +156,13 @@ suite('Language Server Activation - Downloader', () => {
             .returns(() => Promise.resolve(pkg))
             .verifiable(TypeMoq.Times.once());
 
-        const [uri, version, name] = await languageServerDownloader.getDownloadInfo(resource);
+        const { downloadUri, lsVersion, lsName } = await languageServerDownloader.getDownloadInfo(resource);
 
         folderService.verifyAll();
         workspaceService.verifyAll();
-        expect(uri).to.equal(pkg.uri);
-        expect(version).to.equal(pkg.version.raw);
-        expect(name).to.equal('ls');
+        expect(downloadUri).to.equal(pkg.uri);
+        expect(lsVersion).to.equal(pkg.version.raw);
+        expect(lsName).to.equal('ls');
     });
 
     suite('Test LanguageServerDownloader.downloadFile', () => {
@@ -171,7 +170,7 @@ suite('Language Server Activation - Downloader', () => {
         let outputChannelDownload: IOutputChannel;
         let fileDownloader: IFileDownloader;
         let lsOutputChannelDownload: TypeMoq.IMock<ILanguageServerOutputChannel>;
-        // tslint:disable-next-line: no-http-string
+
         const downloadUri = 'http://wow.com/file.txt';
         const downloadTitle = 'Downloadimg file.txt';
         setup(() => {
@@ -180,8 +179,8 @@ suite('Language Server Activation - Downloader', () => {
             const lsFolderService = mock(DotNetLanguageServerFolderService);
             const appShell = mock(ApplicationShell);
             const fs = mock(FileSystem);
-            // tslint:disable-next-line: no-shadowed-variable
-            const workspaceService = mock(WorkspaceService);
+
+            const mockedWorkspaceService = mock(WorkspaceService);
             lsOutputChannelDownload = TypeMoq.Mock.ofType<ILanguageServerOutputChannel>();
             lsOutputChannelDownload.setup((l) => l.channel).returns(() => instance(outputChannelDownload));
 
@@ -191,8 +190,8 @@ suite('Language Server Activation - Downloader', () => {
                 instance(lsFolderService),
                 instance(appShell),
                 instance(fs),
-                instance(workspaceService),
-                undefined as any
+                instance(mockedWorkspaceService),
+                undefined as any,
             );
         });
 
@@ -202,7 +201,7 @@ suite('Language Server Activation - Downloader', () => {
             const expectedDownloadOptions = {
                 extension: '.nupkg',
                 outputChannel: instance(outputChannelDownload),
-                progressMessagePrefix: downloadTitle
+                progressMessagePrefix: downloadTitle,
             };
 
             const file = await lsDownloader.downloadFile(downloadUri, downloadTitle);
@@ -231,47 +230,50 @@ suite('Language Server Activation - Downloader', () => {
         });
     });
 
-    // tslint:disable-next-line:max-func-body-length
     suite('Test LanguageServerDownloader.downloadLanguageServer', () => {
         const failure = new Error('kaboom');
 
         class LanguageServerDownloaderTest extends LanguageServerDownloader {
-            // tslint:disable-next-line:no-unnecessary-override
             public async downloadLanguageServer(destinationFolder: string, res?: Resource): Promise<void> {
                 return super.downloadLanguageServer(destinationFolder, res);
             }
+
             public async downloadFile(_uri: string, _title: string): Promise<string> {
                 throw failure;
             }
         }
         class LanguageServerExtractorTest extends LanguageServerDownloader {
-            // tslint:disable-next-line:no-unnecessary-override
             public async downloadLanguageServer(destinationFolder: string, res?: Resource): Promise<void> {
                 return super.downloadLanguageServer(destinationFolder, res);
             }
-            // tslint:disable-next-line:no-unnecessary-override
+
             public async getDownloadInfo(res?: Resource) {
                 return super.getDownloadInfo(res);
             }
+
             public async downloadFile() {
                 return 'random';
             }
+
             protected async unpackArchive(_extensionPath: string, _tempFilePath: string): Promise<void> {
                 throw failure;
             }
         }
         class LanguageServeBundledTest extends LanguageServerDownloader {
-            // tslint:disable-next-line:no-unnecessary-override
             public async downloadLanguageServer(destinationFolder: string, res?: Resource): Promise<void> {
                 return super.downloadLanguageServer(destinationFolder, res);
             }
-            // tslint:disable-next-line:no-unnecessary-override
-            public async getDownloadInfo(_res?: Resource): Promise<string[]> {
+
+            public async getDownloadInfo(
+                _res?: Resource,
+            ): Promise<{ downloadUri: string; lsVersion: string; lsName: string }> {
                 throw failure;
             }
+
             public async downloadFile(): Promise<string> {
                 throw failure;
             }
+
             protected async unpackArchive(_extensionPath: string, _tempFilePath: string): Promise<void> {
                 throw failure;
             }
@@ -299,7 +301,7 @@ suite('Language Server Activation - Downloader', () => {
                 appShell.object,
                 fs.object,
                 workspaceService.object,
-                undefined as any
+                undefined as any,
             );
             languageServerExtractorTest = new LanguageServerExtractorTest(
                 lsOutputChannel.object,
@@ -308,7 +310,7 @@ suite('Language Server Activation - Downloader', () => {
                 appShell.object,
                 fs.object,
                 workspaceService.object,
-                undefined as any
+                undefined as any,
             );
             languageServerBundledTest = new LanguageServeBundledTest(
                 lsOutputChannel.object,
@@ -317,7 +319,7 @@ suite('Language Server Activation - Downloader', () => {
                 appShell.object,
                 fs.object,
                 workspaceService.object,
-                undefined as any
+                undefined as any,
             );
         });
         test('Display error message if LS downloading fails', async () => {
@@ -382,10 +384,10 @@ suite('Language Server Activation - Downloader', () => {
     });
 });
 
-function makePkgInfo(name: string, uri: string, version: string = '0.0.0') {
+function makePkgInfo(name: string, uri: string, version = '0.0.0') {
     return {
         package: name,
-        uri: uri,
-        version: new SemVer(version)
+        uri,
+        version: new SemVer(version),
     } as any;
 }

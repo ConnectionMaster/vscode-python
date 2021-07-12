@@ -1,14 +1,13 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-'use strict';
-
+// eslint-disable-next-line max-classes-per-file
 import { inject, named } from 'inversify';
 import { DiagnosticSeverity } from 'vscode';
 import { IWorkspaceService } from '../../../common/application/types';
 import { CODE_RUNNER_EXTENSION_ID } from '../../../common/constants';
 import { DeprecatePythonPath } from '../../../common/experiments/groups';
-import { IDisposableRegistry, IExperimentsManager, IExtensions, Resource } from '../../../common/types';
+import { IDisposableRegistry, IExperimentService, IExtensions, Resource } from '../../../common/types';
 import { Common, Diagnostics } from '../../../common/utils/localize';
 import { IServiceContainer } from '../../../ioc/types';
 import { BaseDiagnostic, BaseDiagnosticsService } from '../base';
@@ -24,7 +23,7 @@ export class UpgradeCodeRunnerDiagnostic extends BaseDiagnostic {
             message,
             DiagnosticSeverity.Information,
             DiagnosticScope.Global,
-            resource
+            resource,
         );
     }
 }
@@ -32,26 +31,28 @@ export class UpgradeCodeRunnerDiagnostic extends BaseDiagnostic {
 export const UpgradeCodeRunnerDiagnosticServiceId = 'UpgradeCodeRunnerDiagnosticServiceId';
 
 export class UpgradeCodeRunnerDiagnosticService extends BaseDiagnosticsService {
-    public _diagnosticReturned: boolean = false;
+    public _diagnosticReturned = false;
+
     private workspaceService: IWorkspaceService;
+
     constructor(
         @inject(IServiceContainer) serviceContainer: IServiceContainer,
         @inject(IDiagnosticHandlerService)
         @named(DiagnosticCommandPromptHandlerServiceId)
         protected readonly messageService: IDiagnosticHandlerService<MessageCommandPrompt>,
         @inject(IDisposableRegistry) disposableRegistry: IDisposableRegistry,
-        @inject(IExtensions) private readonly extensions: IExtensions
+        @inject(IExtensions) private readonly extensions: IExtensions,
     ) {
         super([DiagnosticCodes.UpgradeCodeRunnerDiagnostic], serviceContainer, disposableRegistry, true);
         this.workspaceService = this.serviceContainer.get<IWorkspaceService>(IWorkspaceService);
     }
+
     public async diagnose(resource: Resource): Promise<IDiagnostic[]> {
         if (this._diagnosticReturned) {
             return [];
         }
-        const experiments = this.serviceContainer.get<IExperimentsManager>(IExperimentsManager);
-        experiments.sendTelemetryIfInExperiment(DeprecatePythonPath.control);
-        if (!experiments.inExperiment(DeprecatePythonPath.experiment)) {
+        const experiments = this.serviceContainer.get<IExperimentService>(IExperimentService);
+        if (!experiments.inExperimentSync(DeprecatePythonPath.experiment)) {
             return [];
         }
         const extension = this.extensions.getExtension(CODE_RUNNER_EXTENSION_ID);
@@ -86,8 +87,8 @@ export class UpgradeCodeRunnerDiagnosticService extends BaseDiagnosticsService {
         const options = [
             {
                 prompt: Common.doNotShowAgain(),
-                command: commandFactory.createCommand(diagnostic, { type: 'ignore', options: DiagnosticScope.Global })
-            }
+                command: commandFactory.createCommand(diagnostic, { type: 'ignore', options: DiagnosticScope.Global }),
+            },
         ];
 
         await this.messageService.handle(diagnostic, { commandPrompts: options });

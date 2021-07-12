@@ -2,8 +2,7 @@ import * as assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { EXTENSION_ROOT_DIR } from '../../../client/common/constants';
-import { CommandSource } from '../../../client/testing/common/constants';
+import { CommandSource, EXTENSION_ROOT_DIR } from '../../../client/common/constants';
 import { ITestManagerFactory } from '../../../client/testing/common/types';
 import { rootWorkspaceUri, updateSetting } from '../../common';
 import { lookForTestFile } from '../helper';
@@ -17,14 +16,13 @@ const UNITTEST_SINGLE_TEST_FILE_PATH = path.join(
     'test',
     'pythonFiles',
     'testFiles',
-    'single'
+    'single',
 );
 const filesToDelete = [
     path.join(UNITTEST_TEST_FILES_PATH, '.noseids'),
-    path.join(UNITTEST_SINGLE_TEST_FILE_PATH, '.noseids')
+    path.join(UNITTEST_SINGLE_TEST_FILE_PATH, '.noseids'),
 ];
 
-// tslint:disable-next-line:max-func-body-length
 suite('Unit Tests - nose - discovery against actual python process', () => {
     let ioc: UnitTestIocContainer;
     const configTarget = IS_MULTI_ROOT_TEST
@@ -50,20 +48,20 @@ suite('Unit Tests - nose - discovery against actual python process', () => {
     });
     setup(async () => {
         await initializeTest();
-        initializeDI();
+        await initializeDI();
     });
     teardown(async () => {
         await ioc.dispose();
         await updateSetting('testing.nosetestArgs', [], rootWorkspaceUri, configTarget);
     });
 
-    function initializeDI() {
+    async function initializeDI() {
         ioc = new UnitTestIocContainer();
         ioc.registerCommonTypes();
         ioc.registerProcessTypes();
         ioc.registerUnitTestTypes();
         ioc.registerVariableTypes();
-        ioc.registerMockInterpreterTypes();
+        await ioc.registerMockInterpreterTypes();
         ioc.registerInterpreterStorageTypes();
     }
 

@@ -22,7 +22,7 @@ import {
     SignatureHelpContext,
     SymbolInformation,
     TextDocument,
-    WorkspaceEdit
+    WorkspaceEdit,
 } from 'vscode';
 
 import { PYTHON } from '../common/constants';
@@ -40,10 +40,7 @@ import { PythonRenameProvider } from '../providers/renameProvider';
 import { PythonSignatureProvider } from '../providers/signatureProvider';
 import { JediSymbolProvider } from '../providers/symbolProvider';
 import { PythonEnvironment } from '../pythonEnvironments/info';
-import { ITestManagementService } from '../testing/types';
-import { BlockFormatProviders } from '../typeFormatters/blockFormatProvider';
-import { OnTypeFormattingDispatcher } from '../typeFormatters/dispatcher';
-import { OnEnterFormatter } from '../typeFormatters/onEnterFormatter';
+import { ITestingService } from '../testing/types';
 import { WorkspaceSymbols } from '../workspaceSymbols/main';
 import { ILanguageServerActivator } from './types';
 
@@ -94,7 +91,7 @@ export class JediExtensionActivator implements ILanguageServerActivator {
             context.subscriptions.push(JediExtensionActivator.workspaceSymbols);
         }
 
-        const testManagementService = this.serviceManager.get<ITestManagementService>(ITestManagementService);
+        const testManagementService = this.serviceManager.get<ITestingService>(ITestingService);
         testManagementService
             .activate(this.symbolProvider)
             .catch((ex) => traceError('Failed to activate Unit Tests', ex));
@@ -121,41 +118,26 @@ export class JediExtensionActivator implements ILanguageServerActivator {
             // IDE.
             this.registrations.push(
                 commands.registerCommand('python.goToPythonObject', () =>
-                    this.objectDefinitionProvider!.goToObjectDefinition()
-                )
+                    this.objectDefinitionProvider!.goToObjectDefinition(),
+                ),
             );
             this.registrations.push(languages.registerRenameProvider(this.documentSelector, this.renameProvider));
             this.registrations.push(
-                languages.registerDefinitionProvider(this.documentSelector, this.definitionProvider)
+                languages.registerDefinitionProvider(this.documentSelector, this.definitionProvider),
             );
             this.registrations.push(languages.registerHoverProvider(this.documentSelector, this.hoverProvider));
             this.registrations.push(languages.registerReferenceProvider(this.documentSelector, this.referenceProvider));
             this.registrations.push(
-                languages.registerCompletionItemProvider(this.documentSelector, this.completionProvider, '.')
+                languages.registerCompletionItemProvider(this.documentSelector, this.completionProvider, '.'),
             );
             this.registrations.push(languages.registerCodeLensProvider(this.documentSelector, this.codeLensProvider));
-            const onTypeDispatcher = new OnTypeFormattingDispatcher({
-                '\n': new OnEnterFormatter(),
-                ':': new BlockFormatProviders()
-            });
-            const onTypeTriggers = onTypeDispatcher.getTriggerCharacters();
-            if (onTypeTriggers) {
-                this.registrations.push(
-                    languages.registerOnTypeFormattingEditProvider(
-                        PYTHON,
-                        onTypeDispatcher,
-                        onTypeTriggers.first,
-                        ...onTypeTriggers.more
-                    )
-                );
-            }
             this.registrations.push(
-                languages.registerDocumentSymbolProvider(this.documentSelector, this.symbolProvider)
+                languages.registerDocumentSymbolProvider(this.documentSelector, this.symbolProvider),
             );
             const pythonSettings = this.serviceManager.get<IConfigurationService>(IConfigurationService).getSettings();
             if (pythonSettings.devOptions.indexOf('DISABLE_SIGNATURE') === -1) {
                 this.registrations.push(
-                    languages.registerSignatureHelpProvider(this.documentSelector, this.signatureProvider, '(', ',')
+                    languages.registerSignatureHelpProvider(this.documentSelector, this.signatureProvider, '(', ','),
                 );
             }
         }
@@ -165,7 +147,7 @@ export class JediExtensionActivator implements ILanguageServerActivator {
         document: TextDocument,
         position: Position,
         newName: string,
-        token: CancellationToken
+        token: CancellationToken,
     ): ProviderResult<WorkspaceEdit> {
         if (this.renameProvider) {
             return this.renameProvider.provideRenameEdits(document, position, newName, token);
@@ -174,7 +156,7 @@ export class JediExtensionActivator implements ILanguageServerActivator {
     public provideDefinition(
         document: TextDocument,
         position: Position,
-        token: CancellationToken
+        token: CancellationToken,
     ): ProviderResult<Location | Location[] | LocationLink[]> {
         if (this.definitionProvider) {
             return this.definitionProvider.provideDefinition(document, position, token);
@@ -189,7 +171,7 @@ export class JediExtensionActivator implements ILanguageServerActivator {
         document: TextDocument,
         position: Position,
         context: ReferenceContext,
-        token: CancellationToken
+        token: CancellationToken,
     ): ProviderResult<Location[]> {
         if (this.referenceProvider) {
             return this.referenceProvider.provideReferences(document, position, context, token);
@@ -199,7 +181,7 @@ export class JediExtensionActivator implements ILanguageServerActivator {
         document: TextDocument,
         position: Position,
         token: CancellationToken,
-        _context: CompletionContext
+        _context: CompletionContext,
     ): ProviderResult<CompletionItem[] | CompletionList> {
         if (this.completionProvider) {
             return this.completionProvider.provideCompletionItems(document, position, token);
@@ -222,7 +204,7 @@ export class JediExtensionActivator implements ILanguageServerActivator {
     }
     public provideDocumentSymbols(
         document: TextDocument,
-        token: CancellationToken
+        token: CancellationToken,
     ): ProviderResult<SymbolInformation[] | DocumentSymbol[]> {
         if (this.symbolProvider) {
             return this.symbolProvider.provideDocumentSymbols(document, token);
@@ -232,7 +214,7 @@ export class JediExtensionActivator implements ILanguageServerActivator {
         document: TextDocument,
         position: Position,
         token: CancellationToken,
-        _context: SignatureHelpContext
+        _context: SignatureHelpContext,
     ): ProviderResult<SignatureHelp> {
         if (this.signatureProvider) {
             return this.signatureProvider.provideSignatureHelp(document, position, token);

@@ -8,22 +8,27 @@ import { IWorkspaceService } from '../common/application/types';
 import { NativeTensorBoard } from '../common/experiments/groups';
 import { traceError } from '../common/logger';
 import { IDisposableRegistry, IExperimentService } from '../common/types';
+import { TensorBoardEntrypointTrigger } from './constants';
 import { TensorBoardPrompt } from './tensorBoardPrompt';
 
 @injectable()
 export class TensorBoardFileWatcher implements IExtensionSingleActivationService {
     private fileSystemWatchers = new Map<WorkspaceFolder, FileSystemWatcher[]>();
-    private globPattern1 = '*tfevents*';
-    private globPattern2 = '*/*tfevents*';
+
+    private globPatterns = ['*tfevents*', '*/*tfevents*', '*/*/*tfevents*'];
 
     constructor(
         @inject(IWorkspaceService) private workspaceService: IWorkspaceService,
         @inject(TensorBoardPrompt) private tensorBoardPrompt: TensorBoardPrompt,
         @inject(IDisposableRegistry) private readonly disposables: IDisposableRegistry,
-        @inject(IExperimentService) private experimentService: IExperimentService
+        @inject(IExperimentService) private experimentService: IExperimentService,
     ) {}
 
-    public async activate() {
+    public async activate(): Promise<void> {
+        this.activateInternal().ignoreErrors();
+    }
+
+    private async activateInternal() {
         if (!(await this.experimentService.inExperiment(NativeTensorBoard.experiment))) {
             return;
         }
@@ -44,22 +49,22 @@ export class TensorBoardFileWatcher implements IExtensionSingleActivationService
 
         // If workspace folders change, ensure we update our FileSystemWatchers
         this.disposables.push(
-            this.workspaceService.onDidChangeWorkspaceFolders((e) => this.updateFileSystemWatchers(e))
+            this.workspaceService.onDidChangeWorkspaceFolders((e) => this.updateFileSystemWatchers(e)),
         );
     }
 
     private async promptIfWorkspaceHasPreexistingFiles() {
         try {
-            for (const pattern of [this.globPattern1, this.globPattern2]) {
+            for (const pattern of this.globPatterns) {
                 const matches = await this.workspaceService.findFiles(pattern, undefined, 1);
                 if (matches.length > 0) {
-                    await this.tensorBoardPrompt.showNativeTensorBoardPrompt();
+                    await this.tensorBoardPrompt.showNativeTensorBoardPrompt(TensorBoardEntrypointTrigger.tfeventfiles);
                     return;
                 }
             }
         } catch (e) {
             traceError(
-                `Failed to prompt to launch TensorBoard session based on preexisting tfevent files in workspace: ${e}`
+                `Failed to prompt to launch TensorBoard session based on preexisting tfevent files in workspace: ${e}`,
             );
         }
     }
@@ -79,16 +84,20 @@ export class TensorBoardFileWatcher implements IExtensionSingleActivationService
 
     private createFileSystemWatcher(folder: WorkspaceFolder) {
         const fileWatchers = [];
-        for (const pattern of [this.globPattern1, this.globPattern2]) {
+        for (const pattern of this.globPatterns) {
             const relativePattern = new RelativePattern(folder, pattern);
             const fileSystemWatcher = this.workspaceService.createFileSystemWatcher(relativePattern);
 
             // When a file is created or changed that matches `this.globPattern`, try to show our prompt
             this.disposables.push(
-                fileSystemWatcher.onDidCreate((_uri) => this.tensorBoardPrompt.showNativeTensorBoardPrompt())
+                fileSystemWatcher.onDidCreate(() =>
+                    this.tensorBoardPrompt.showNativeTensorBoardPrompt(TensorBoardEntrypointTrigger.tfeventfiles),
+                ),
             );
             this.disposables.push(
-                fileSystemWatcher.onDidChange((_uri) => this.tensorBoardPrompt.showNativeTensorBoardPrompt())
+                fileSystemWatcher.onDidChange(() =>
+                    this.tensorBoardPrompt.showNativeTensorBoardPrompt(TensorBoardEntrypointTrigger.tfeventfiles),
+                ),
             );
             this.disposables.push(fileSystemWatcher);
             fileWatchers.push(fileSystemWatcher);

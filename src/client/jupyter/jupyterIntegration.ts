@@ -1,6 +1,5 @@
-// tslint:disable-next-line: no-single-line-block-comment
 /* eslint-disable comma-dangle */
-// tslint:disable-next-line: no-single-line-block-comment
+
 /* eslint-disable implicit-arrow-linebreak */
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
@@ -11,33 +10,40 @@ import { CancellationToken, Disposable, Event, Extension, Memento, Uri } from 'v
 import * as lsp from 'vscode-languageserver-protocol';
 import { ILanguageServerCache, ILanguageServerConnection } from '../activation/types';
 import { JUPYTER_EXTENSION_ID } from '../common/constants';
-import { InterpreterUri } from '../common/installer/types';
+import { InterpreterUri, ModuleInstallFlags } from '../common/installer/types';
 import {
     GLOBAL_MEMENTO,
+    IExperimentService,
     IExtensions,
     IInstaller,
     IMemento,
     InstallerResponse,
     Product,
-    Resource
+    ProductInstallStatus,
+    Resource,
 } from '../common/types';
 import { isResource } from '../common/utils/misc';
 import { getDebugpyPackagePath } from '../debugger/extension/adapter/remoteLaunchers';
 import { IEnvironmentActivationService } from '../interpreter/activation/types';
 import { IInterpreterQuickPickItem, IInterpreterSelector } from '../interpreter/configuration/types';
-import { IInterpreterService } from '../interpreter/contracts';
-import { IWindowsStoreInterpreter } from '../interpreter/locators/types';
-import { WindowsStoreInterpreter } from '../pythonEnvironments/discovery/locators/services/windowsStoreInterpreter';
+import {
+    IComponentAdapter,
+    IInterpreterDisplay,
+    IInterpreterService,
+    IInterpreterStatusbarVisibilityFilter,
+} from '../interpreter/contracts';
 import { PythonEnvironment } from '../pythonEnvironments/info';
 import { IDataViewerDataProvider, IJupyterUriProvider } from './types';
+import { inDiscoveryExperiment } from '../common/experiments/helpers';
+import { isWindowsStoreInterpreter } from '../pythonEnvironments/discovery/locators/services/windowsStoreInterpreter';
 
-export interface ILanguageServer extends Disposable {
+interface ILanguageServer extends Disposable {
     readonly connection: ILanguageServerConnection;
     readonly capabilities: lsp.ServerCapabilities;
 }
 
 /**
- * This allows Python exntension to update Product enum without breaking Jupyter.
+ * This allows Python extension to update Product enum without breaking Jupyter.
  * I.e. we have a strict contract, else using numbers (in enums) is bound to break across products.
  */
 enum JupyterProductToInstall {
@@ -46,7 +52,7 @@ enum JupyterProductToInstall {
     notebook = 'notebook',
     kernelspec = 'kernelspec',
     nbconvert = 'nbconvert',
-    pandas = 'pandas'
+    pandas = 'pandas',
 }
 
 const ProductMapping: { [key in JupyterProductToInstall]: Product } = {
@@ -55,7 +61,7 @@ const ProductMapping: { [key in JupyterProductToInstall]: Product } = {
     [JupyterProductToInstall.kernelspec]: Product.kernelspec,
     [JupyterProductToInstall.nbconvert]: Product.nbconvert,
     [JupyterProductToInstall.notebook]: Product.notebook,
-    [JupyterProductToInstall.pandas]: Product.pandas
+    [JupyterProductToInstall.pandas]: Product.pandas,
 };
 
 type PythonApiForJupyterExtension = {
@@ -82,12 +88,9 @@ type PythonApiForJupyterExtension = {
     getActivatedEnvironmentVariables(
         resource: Resource,
         interpreter?: PythonEnvironment,
-        allowExceptions?: boolean
+        allowExceptions?: boolean,
     ): Promise<NodeJS.ProcessEnv | undefined>;
     isWindowsStoreInterpreter(pythonPath: string): Promise<boolean>;
-    /**
-     * IWindowsStoreInterpreter
-     */
     getSuggestions(resource: Resource): Promise<IInterpreterQuickPickItem[]>;
     /**
      * IInstaller
@@ -95,8 +98,16 @@ type PythonApiForJupyterExtension = {
     install(
         product: JupyterProductToInstall,
         resource?: InterpreterUri,
-        cancel?: CancellationToken
+        cancel?: CancellationToken,
     ): Promise<InstallerResponse>;
+    /**
+     * IInstaller
+     */
+    isProductVersionCompatible(
+        product: Product,
+        semVerRequirement: string,
+        resource?: InterpreterUri,
+    ): Promise<ProductInstallStatus>;
     /**
      * Returns path to where `debugpy` is. In python extension this is `/pythonFiles/lib/python`.
      */
@@ -110,9 +121,13 @@ type PythonApiForJupyterExtension = {
      * @param resource file that determines which connection to return
      */
     getLanguageServer(resource?: InterpreterUri): Promise<ILanguageServer | undefined>;
+    /**
+     * Registers a visibility filter for the interpreter status bar.
+     */
+    registerInterpreterStatusFilter(filter: IInterpreterStatusbarVisibilityFilter): void;
 };
 
-export type JupyterExtensionApi = {
+type JupyterExtensionApi = {
     /**
      * Registers python extension specific parts with the jupyter extension
      * @param interpreterService
@@ -139,14 +154,16 @@ export class JupyterExtensionIntegration {
         @inject(IExtensions) private readonly extensions: IExtensions,
         @inject(IInterpreterService) private readonly interpreterService: IInterpreterService,
         @inject(IInterpreterSelector) private readonly interpreterSelector: IInterpreterSelector,
-        @inject(WindowsStoreInterpreter) private readonly windowsStoreInterpreter: IWindowsStoreInterpreter,
         @inject(IInstaller) private readonly installer: IInstaller,
         @inject(IEnvironmentActivationService) private readonly envActivation: IEnvironmentActivationService,
         @inject(ILanguageServerCache) private readonly languageServerCache: ILanguageServerCache,
-        @inject(IMemento) @named(GLOBAL_MEMENTO) private globalState: Memento
+        @inject(IMemento) @named(GLOBAL_MEMENTO) private globalState: Memento,
+        @inject(IInterpreterDisplay) private interpreterDisplay: IInterpreterDisplay,
+        @inject(IComponentAdapter) private pyenvs: IComponentAdapter,
+        @inject(IExperimentService) private experimentService: IExperimentService,
     ) {}
 
-    public registerApi(jupyterExtensionApi: JupyterExtensionApi) {
+    public registerApi(jupyterExtensionApi: JupyterExtensionApi): JupyterExtensionApi | undefined {
         // Forward python parts
         jupyterExtensionApi.registerPythonApi({
             onDidChangeInterpreter: this.interpreterService.onDidChangeInterpreter,
@@ -157,17 +174,36 @@ export class JupyterExtensionIntegration {
             getActivatedEnvironmentVariables: async (
                 resource: Resource,
                 interpreter?: PythonEnvironment,
-                allowExceptions?: boolean
+                allowExceptions?: boolean,
             ) => this.envActivation.getActivatedEnvironmentVariables(resource, interpreter, allowExceptions),
-            isWindowsStoreInterpreter: async (pythonPath: string): Promise<boolean> =>
-                this.windowsStoreInterpreter.isWindowsStoreInterpreter(pythonPath),
+            isWindowsStoreInterpreter: async (pythonPath: string): Promise<boolean> => {
+                if (await inDiscoveryExperiment(this.experimentService)) {
+                    return this.pyenvs.isWindowsStoreInterpreter(pythonPath);
+                }
+                return isWindowsStoreInterpreter(pythonPath);
+            },
             getSuggestions: async (resource: Resource): Promise<IInterpreterQuickPickItem[]> =>
                 this.interpreterSelector.getSuggestions(resource),
             install: async (
                 product: JupyterProductToInstall,
                 resource?: InterpreterUri,
-                cancel?: CancellationToken
-            ): Promise<InstallerResponse> => this.installer.install(ProductMapping[product], resource, cancel),
+                cancel?: CancellationToken,
+                reInstallAndUpdate?: boolean,
+            ): Promise<InstallerResponse> =>
+                this.installer.install(
+                    ProductMapping[product],
+                    resource,
+                    cancel,
+                    reInstallAndUpdate === true
+                        ? ModuleInstallFlags.updateDependencies | ModuleInstallFlags.reInstall
+                        : undefined,
+                ),
+            isProductVersionCompatible: async (
+                product: Product,
+                semVerRequirement: string,
+                resource?: InterpreterUri,
+            ): Promise<ProductInstallStatus> =>
+                this.installer.isProductVersionCompatible(product, semVerRequirement, resource),
             getDebuggerPath: async () => dirname(getDebugpyPackagePath()),
             getInterpreterPathSelectedForJupyterServer: () =>
                 this.globalState.get<string | undefined>('INTERPRETER_PATH_SELECTED_FOR_JUPYTER_SERVER'),
@@ -176,17 +212,21 @@ export class JupyterExtensionIntegration {
                 const interpreter = !isResource(r) ? r : undefined;
                 const client = await this.languageServerCache.get(resource, interpreter);
 
-                // Some langauge servers don't support the connection yet. (like Jedi until we switch to LSP)
+                // Some language servers don't support the connection yet. (like Jedi until we switch to LSP)
                 if (client && client.connection && client.capabilities) {
                     return {
                         connection: client.connection,
                         capabilities: client.capabilities,
-                        dispose: client.dispose
+                        dispose: client.dispose,
                     };
                 }
                 return undefined;
-            }
+            },
+            registerInterpreterStatusFilter: this.interpreterDisplay.registerVisibilityFilter.bind(
+                this.interpreterDisplay,
+            ),
         });
+        return undefined;
     }
 
     public async integrateWithJupyterExtension(): Promise<void> {
@@ -196,7 +236,7 @@ export class JupyterExtensionIntegration {
         }
     }
 
-    public registerRemoteServerProvider(serverProvider: IJupyterUriProvider) {
+    public registerRemoteServerProvider(serverProvider: IJupyterUriProvider): void {
         this.getExtensionApi()
             .then((e) => {
                 if (e) {
@@ -206,18 +246,19 @@ export class JupyterExtensionIntegration {
             .ignoreErrors();
     }
 
-    public async showDataViewer(dataProvider: IDataViewerDataProvider, title: string) {
+    public async showDataViewer(dataProvider: IDataViewerDataProvider, title: string): Promise<void> {
         const api = await this.getExtensionApi();
         if (api) {
             return api.showDataViewer(dataProvider, title);
         }
+        return undefined;
     }
 
     private async getExtensionApi(): Promise<JupyterExtensionApi | undefined> {
         if (!this.jupyterExtension) {
             const jupyterExtension = this.extensions.getExtension<JupyterExtensionApi>(JUPYTER_EXTENSION_ID);
             if (!jupyterExtension) {
-                return;
+                return undefined;
             }
             await jupyterExtension.activate();
             if (jupyterExtension.isActive) {
@@ -227,5 +268,6 @@ export class JupyterExtensionIntegration {
         } else {
             return this.jupyterExtension.exports;
         }
+        return undefined;
     }
 }

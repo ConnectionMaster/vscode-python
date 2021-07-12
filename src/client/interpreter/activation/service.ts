@@ -7,7 +7,7 @@ import { inject, injectable } from 'inversify';
 
 import { IWorkspaceService } from '../../common/application/types';
 import { PYTHON_WARNINGS } from '../../common/constants';
-import { LogOptions, traceDecorators, traceError, traceInfo, traceVerbose } from '../../common/logger';
+import { LogOptions, traceDecorators, traceError, traceInfo, traceVerbose, traceWarning } from '../../common/logger';
 import { IPlatformService } from '../../common/platform/types';
 import * as internalScripts from '../../common/process/internal/scripts';
 import { ExecutionResult, IProcessServiceFactory } from '../../common/process/types';
@@ -23,21 +23,21 @@ import { EventName } from '../../telemetry/constants';
 import { IInterpreterService } from '../contracts';
 import { IEnvironmentActivationService } from './types';
 
-const getEnvironmentPrefix = 'e8b39361-0157-4923-80e1-22d70d46dee6';
-const cacheDuration = 10 * 60 * 1000;
-export const getEnvironmentTimeout = 30000;
+const ENVIRONMENT_PREFIX = 'e8b39361-0157-4923-80e1-22d70d46dee6';
+const CACHE_DURATION = 10 * 60 * 1000;
+const ENVIRONMENT_TIMEOUT = 30000;
 
 // The shell under which we'll execute activation scripts.
 const defaultShells = {
     [OSType.Windows]: { shell: 'cmd', shellType: TerminalShellType.commandPrompt },
     [OSType.OSX]: { shell: 'bash', shellType: TerminalShellType.bash },
     [OSType.Linux]: { shell: 'bash', shellType: TerminalShellType.bash },
-    [OSType.Unknown]: undefined
+    [OSType.Unknown]: undefined,
 };
 
 const condaRetryMessages = [
     'The process cannot access the file because it is being used by another process',
-    'The directory is not empty'
+    'The directory is not empty',
 ];
 
 /**
@@ -99,18 +99,18 @@ export class EnvironmentActivationService implements IEnvironmentActivationServi
         @inject(ICurrentProcess) private currentProcess: ICurrentProcess,
         @inject(IWorkspaceService) private workspace: IWorkspaceService,
         @inject(IInterpreterService) private interpreterService: IInterpreterService,
-        @inject(IEnvironmentVariablesProvider) private readonly envVarsService: IEnvironmentVariablesProvider
+        @inject(IEnvironmentVariablesProvider) private readonly envVarsService: IEnvironmentVariablesProvider,
     ) {
         this.envVarsService.onDidEnvironmentVariablesChange(
             () => this.activatedEnvVariablesCache.clear(),
             this,
-            this.disposables
+            this.disposables,
         );
 
         this.interpreterService.onDidChangeInterpreter(
             () => this.activatedEnvVariablesCache.clear(),
             this,
-            this.disposables
+            this.disposables,
         );
     }
 
@@ -122,7 +122,7 @@ export class EnvironmentActivationService implements IEnvironmentActivationServi
     public async getActivatedEnvironmentVariables(
         resource: Resource,
         interpreter?: PythonEnvironment,
-        allowExceptions?: boolean
+        allowExceptions?: boolean,
     ): Promise<NodeJS.ProcessEnv | undefined> {
         // Cache key = resource + interpreter.
         const workspaceKey = this.workspace.getWorkspaceFolderIdentifier(resource);
@@ -134,7 +134,7 @@ export class EnvironmentActivationService implements IEnvironmentActivationServi
         }
 
         // Cache only if successful, else keep trying & failing if necessary.
-        const cache = new InMemoryCache<NodeJS.ProcessEnv | undefined>(cacheDuration, '');
+        const cache = new InMemoryCache<NodeJS.ProcessEnv | undefined>(CACHE_DURATION);
         return this.getActivatedEnvironmentVariablesImpl(resource, interpreter, allowExceptions).then((vars) => {
             cache.data = vars;
             this.activatedEnvVariablesCache.set(cacheKey, cache);
@@ -145,7 +145,7 @@ export class EnvironmentActivationService implements IEnvironmentActivationServi
     public async getActivatedEnvironmentVariablesImpl(
         resource: Resource,
         interpreter?: PythonEnvironment,
-        allowExceptions?: boolean
+        allowExceptions?: boolean,
     ): Promise<NodeJS.ProcessEnv | undefined> {
         const shellInfo = defaultShells[this.platform.osType];
         if (!shellInfo) {
@@ -156,7 +156,7 @@ export class EnvironmentActivationService implements IEnvironmentActivationServi
             const activationCommands = await this.helper.getEnvironmentActivationShellCommands(
                 resource,
                 shellInfo.shellType,
-                interpreter
+                interpreter,
             );
             traceVerbose(`Activation Commands received ${activationCommands} for shell ${shellInfo.shell}`);
             if (!activationCommands || !Array.isArray(activationCommands) || activationCommands.length === 0) {
@@ -183,7 +183,7 @@ export class EnvironmentActivationService implements IEnvironmentActivationServi
             args.forEach((arg, i) => {
                 args[i] = arg.toCommandArgument();
             });
-            const command = `${activationCommand} && echo '${getEnvironmentPrefix}' && python ${args.join(' ')}`;
+            const command = `${activationCommand} && echo '${ENVIRONMENT_PREFIX}' && python ${args.join(' ')}`;
             traceVerbose(`Activating Environment to capture Environment variables, ${command}`);
 
             // Do some wrapping of the call. For two reasons:
@@ -195,17 +195,32 @@ export class EnvironmentActivationService implements IEnvironmentActivationServi
             // This happens on AzDo machines a bunch when using Conda (and we can't dictate the conda version in order to get the fix)
             let result: ExecutionResult<string> | undefined;
             let tryCount = 1;
+            let returnedEnv: NodeJS.ProcessEnv | undefined;
             while (!result) {
                 try {
                     result = await processService.shellExec(command, {
                         env,
                         shell: shellInfo.shell,
-                        timeout: getEnvironmentTimeout,
+                        timeout: ENVIRONMENT_TIMEOUT,
                         maxBuffer: 1000 * 1000,
-                        throwOnStdErr: false
+                        throwOnStdErr: false,
                     });
-                    if (result.stderr && result.stderr.length > 0) {
-                        throw new Error(`StdErr from ShellExec, ${result.stderr} for ${command}`);
+
+                    try {
+                        // Try to parse the output, even if we have errors in stderr, its possible they are false positives.
+                        // If variables are available, then ignore errors (but log them).
+                        returnedEnv = this.parseEnvironmentOutput(result.stdout, parse);
+                    } catch (ex) {
+                        if (!result.stderr) {
+                            throw ex;
+                        }
+                    }
+                    if (result.stderr) {
+                        if (returnedEnv) {
+                            traceWarning('Got env variables but with errors', result.stderr);
+                        } else {
+                            throw new Error(`StdErr from ShellExec, ${result.stderr} for ${command}`);
+                        }
                     }
                 } catch (exc) {
                     // Special case. Conda for some versions will state a file is in use. If
@@ -221,7 +236,6 @@ export class EnvironmentActivationService implements IEnvironmentActivationServi
                     }
                 }
             }
-            const returnedEnv = this.parseEnvironmentOutput(result.stdout, parse);
 
             // Put back the PYTHONWARNINGS value
             if (oldWarnings && returnedEnv) {
@@ -234,7 +248,7 @@ export class EnvironmentActivationService implements IEnvironmentActivationServi
             traceError('getActivatedEnvironmentVariables', e);
             sendTelemetryEvent(EventName.ACTIVATE_ENV_TO_GET_ENV_VARS_FAILED, undefined, {
                 isPossiblyCondaEnv,
-                terminal: shellInfo.shellType
+                terminal: shellInfo.shellType,
             });
 
             // Some callers want this to bubble out, others don't
@@ -251,7 +265,7 @@ export class EnvironmentActivationService implements IEnvironmentActivationServi
     @traceDecorators.error('Failed to parse Environment variables')
     @traceDecorators.verbose('parseEnvironmentOutput', LogOptions.None)
     protected parseEnvironmentOutput(output: string, parse: (out: string) => NodeJS.ProcessEnv | undefined) {
-        output = output.substring(output.indexOf(getEnvironmentPrefix) + getEnvironmentPrefix.length);
+        output = output.substring(output.indexOf(ENVIRONMENT_PREFIX) + ENVIRONMENT_PREFIX.length);
         const js = output.substring(output.indexOf('{')).trim();
         return parse(js);
     }

@@ -3,8 +3,6 @@
 
 'use strict';
 
-// tslint:disable: no-any
-
 import { expect } from 'chai';
 import * as typemoq from 'typemoq';
 import { IExtensionSingleActivationService } from '../../client/activation/types';
@@ -26,19 +24,18 @@ import {
     IDocumentManager,
     ILanguageService,
     ITerminalManager,
-    IWorkspaceService
+    IWorkspaceService,
 } from '../../client/common/application/types';
 import { WorkspaceService } from '../../client/common/application/workspace';
 import { AsyncDisposableRegistry } from '../../client/common/asyncDisposableRegistry';
 import { ConfigurationService } from '../../client/common/configuration/service';
+import { PipEnvExecutionPath } from '../../client/common/configuration/executionSettings/pipEnvExecution';
 import { CryptoUtils } from '../../client/common/crypto';
 import { EditorUtils } from '../../client/common/editor';
-import { ExperimentsManager } from '../../client/common/experiments/manager';
-import { FeatureDeprecationManager } from '../../client/common/featureDeprecationManager';
 import {
     ExtensionInsidersDailyChannelRule,
     ExtensionInsidersOffChannelRule,
-    ExtensionInsidersWeeklyChannelRule
+    ExtensionInsidersWeeklyChannelRule,
 } from '../../client/common/insidersBuild/downloadChannelRules';
 import { ExtensionChannelService } from '../../client/common/insidersBuild/downloadChannelService';
 import { InsidersExtensionPrompt } from '../../client/common/insidersBuild/insidersExtensionPrompt';
@@ -47,7 +44,7 @@ import {
     ExtensionChannel,
     IExtensionChannelRule,
     IExtensionChannelService,
-    IInsiderExtensionPrompt
+    IInsiderExtensionPrompt,
 } from '../../client/common/insidersBuild/types';
 import { ProductInstaller } from '../../client/common/installer/productInstaller';
 import { InterpreterPathService } from '../../client/common/interpreterPathService';
@@ -79,7 +76,7 @@ import {
     ITerminalActivator,
     ITerminalHelper,
     ITerminalServiceFactory,
-    TerminalActivationProviders
+    TerminalActivationProviders,
 } from '../../client/common/terminal/types';
 import {
     IAsyncDisposableRegistry,
@@ -88,15 +85,15 @@ import {
     ICryptoUtils,
     ICurrentProcess,
     IEditorUtils,
-    IExperimentsManager,
     IExtensions,
-    IFeatureDeprecationManager,
     IHttpClient,
     IInstaller,
     IInterpreterPathService,
     IPathUtils,
     IPersistentStateFactory,
-    IRandom
+    IRandom,
+    IToolExecutionPath,
+    ToolExecutionPath,
 } from '../../client/common/types';
 import { IMultiStepInputFactory, MultiStepInputFactory } from '../../client/common/utils/multiStepInput';
 import { Random } from '../../client/common/utils/random';
@@ -134,18 +131,17 @@ suite('Common - Service Registry', () => {
             [ITerminalActivator, TerminalActivator],
             [ITerminalActivationHandler, PowershellTerminalActivationFailedHandler],
             [ICryptoUtils, CryptoUtils],
-            [IExperimentsManager, ExperimentsManager],
             [ITerminalHelper, TerminalHelper],
             [ITerminalActivationCommandProvider, PyEnvActivationCommandProvider, TerminalActivationProviders.pyenv],
             [ITerminalActivationCommandProvider, Bash, TerminalActivationProviders.bashCShellFish],
             [
                 ITerminalActivationCommandProvider,
                 CommandPromptAndPowerShell,
-                TerminalActivationProviders.commandPromptAndPowerShell
+                TerminalActivationProviders.commandPromptAndPowerShell,
             ],
+            [IToolExecutionPath, PipEnvExecutionPath, ToolExecutionPath.pipenv],
             [ITerminalActivationCommandProvider, CondaActivationCommandProvider, TerminalActivationProviders.conda],
             [ITerminalActivationCommandProvider, PipEnvActivationCommandProvider, TerminalActivationProviders.pipenv],
-            [IFeatureDeprecationManager, FeatureDeprecationManager],
             [IAsyncDisposableRegistry, AsyncDisposableRegistry],
             [IMultiStepInputFactory, MultiStepInputFactory],
             [IImportTracker, ImportTracker],
@@ -158,15 +154,15 @@ suite('Common - Service Registry', () => {
             [IExtensionChannelService, ExtensionChannelService],
             [IExtensionChannelRule, ExtensionInsidersOffChannelRule, ExtensionChannel.off],
             [IExtensionChannelRule, ExtensionInsidersDailyChannelRule, ExtensionChannel.daily],
-            [IExtensionChannelRule, ExtensionInsidersWeeklyChannelRule, ExtensionChannel.weekly]
+            [IExtensionChannelRule, ExtensionInsidersWeeklyChannelRule, ExtensionChannel.weekly],
         ].forEach((mapping) => {
             if (mapping.length === 2) {
                 serviceManager
                     .setup((s) =>
                         s.addSingleton(
                             typemoq.It.isValue(mapping[0] as any),
-                            typemoq.It.is((value) => mapping[1] === value)
-                        )
+                            typemoq.It.is((value) => mapping[1] === value),
+                        ),
                     )
                     .verifiable(typemoq.Times.atLeastOnce());
             } else {
@@ -175,8 +171,8 @@ suite('Common - Service Registry', () => {
                         s.addSingleton(
                             typemoq.It.isValue(mapping[0] as any),
                             typemoq.It.isAny(),
-                            typemoq.It.isValue(mapping[2] as any)
-                        )
+                            typemoq.It.isValue(mapping[2] as any),
+                        ),
                     )
                     .callback((_, cls) => expect(cls).to.equal(mapping[1]))
                     .verifiable(typemoq.Times.once());

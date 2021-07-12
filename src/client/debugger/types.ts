@@ -19,17 +19,24 @@ export enum DebugOptions {
     UnixClient = 'UnixClient',
     StopOnEntry = 'StopOnEntry',
     ShowReturnValue = 'ShowReturnValue',
-    SubProcess = 'Multiprocess'
+    SubProcess = 'Multiprocess',
 }
 
 export type PathMapping = {
     localRoot: string;
     remoteRoot: string;
 };
-export type Connection = {
+type Connection = {
     host?: string;
     port?: number;
 };
+
+export interface IAutomaticCodeReload {
+    enable?: boolean;
+    exclude?: string[];
+    include?: string[];
+    pollingInterval?: number;
+}
 
 interface ICommonDebugArguments {
     redirectOutput?: boolean;
@@ -48,7 +55,7 @@ interface ICommonDebugArguments {
     // An absolute path to local directory with source.
     pathMappings?: PathMapping[];
 }
-export interface IKnownAttachDebugArguments extends ICommonDebugArguments {
+interface IKnownAttachDebugArguments extends ICommonDebugArguments {
     workspaceFolder?: string;
     customDebugger?: boolean;
     // localRoot and remoteRoot are deprecated (replaced by pathMappings).
@@ -63,7 +70,7 @@ export interface IKnownAttachDebugArguments extends ICommonDebugArguments {
     listen?: Connection;
 }
 
-export interface IKnownLaunchRequestArguments extends ICommonDebugArguments {
+interface IKnownLaunchRequestArguments extends ICommonDebugArguments {
     sudo?: boolean;
     pyramid?: boolean;
     workspaceFolder?: string;
@@ -97,9 +104,11 @@ export interface IKnownLaunchRequestArguments extends ICommonDebugArguments {
     // Legacy interpreter setting. Equivalent to setting "python", "debugAdapterPython",
     // and "debugLauncherPython" all at once.
     pythonPath?: string;
+
+    // Configures automatic code reloading.
+    autoReload?: IAutomaticCodeReload;
 }
 
-// tslint:disable-next-line:interface-name
 export interface LaunchRequestArguments
     extends DebugProtocol.LaunchRequestArguments,
         IKnownLaunchRequestArguments,
@@ -107,7 +116,6 @@ export interface LaunchRequestArguments
     type: typeof DebuggerTypeName;
 }
 
-// tslint:disable-next-line:interface-name
 export interface AttachRequestArguments
     extends DebugProtocol.AttachRequestArguments,
         IKnownAttachDebugArguments,
@@ -115,7 +123,6 @@ export interface AttachRequestArguments
     type: typeof DebuggerTypeName;
 }
 
-// tslint:disable-next-line:interface-name
 export interface DebugConfigurationArguments extends LaunchRequestArguments, AttachRequestArguments {}
 
 export type ConsoleType = 'internalConsole' | 'integratedTerminal' | 'externalTerminal';

@@ -1,7 +1,6 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-// tslint:disable-next-line:import-name
 import Char from 'typescript-char';
 import { getUnicodeCategory, UnicodeCategory } from './unicode';
 
@@ -81,10 +80,6 @@ export function isWhiteSpace(ch: number): boolean {
 
 export function isLineBreak(ch: number): boolean {
     return ch === Char.CarriageReturn || ch === Char.LineFeed;
-}
-
-export function isNumber(ch: number): boolean {
-    return (ch >= Char._0 && ch <= Char._9) || ch === Char.Underscore;
 }
 
 export function isDecimal(ch: number): boolean {

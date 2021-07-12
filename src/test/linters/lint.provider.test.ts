@@ -1,12 +1,18 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
+
 'use strict';
 
 import { Container } from 'inversify';
 import * as TypeMoq from 'typemoq';
 import * as vscode from 'vscode';
 import { LanguageServerType } from '../../client/activation/types';
-import { IApplicationShell, IDocumentManager, IWorkspaceService } from '../../client/common/application/types';
+import {
+    IApplicationShell,
+    ICommandManager,
+    IDocumentManager,
+    IWorkspaceService,
+} from '../../client/common/application/types';
 import { PersistentStateFactory } from '../../client/common/persistentState';
 import { IFileSystem } from '../../client/common/platform/types';
 import {
@@ -18,12 +24,12 @@ import {
     IPersistentStateFactory,
     IPythonSettings,
     Product,
-    WORKSPACE_MEMENTO
+    WORKSPACE_MEMENTO,
 } from '../../client/common/types';
 import { createDeferred } from '../../client/common/utils/async';
 import {
     IInterpreterAutoSelectionService,
-    IInterpreterAutoSeletionProxyService
+    IInterpreterAutoSelectionProxyService,
 } from '../../client/interpreter/autoSelection/types';
 import { IInterpreterService } from '../../client/interpreter/contracts';
 import { ServiceContainer } from '../../client/ioc/container';
@@ -36,7 +42,6 @@ import { initialize } from '../initialize';
 import { MockAutoSelectionService } from '../mocks/autoSelector';
 import { MockMemento } from '../mocks/mementos';
 
-// tslint:disable-next-line:max-func-body-length
 suite('Linting - Provider', () => {
     let interpreterService: TypeMoq.IMock<IInterpreterService>;
     let engine: TypeMoq.IMock<ILintingEngine>;
@@ -62,7 +67,7 @@ suite('Linting - Provider', () => {
 
         fs = TypeMoq.Mock.ofType<IFileSystem>();
         fs.setup((x) => x.fileExists(TypeMoq.It.isAny())).returns(
-            () => new Promise<boolean>((resolve, _reject) => resolve(true))
+            () => new Promise<boolean>((resolve) => resolve(true)),
         );
         fs.setup((x) => x.arePathsSame(TypeMoq.It.isAnyString(), TypeMoq.It.isAnyString())).returns(() => true);
         serviceManager.addSingletonInstance<IFileSystem>(IFileSystem, fs.object);
@@ -104,15 +109,19 @@ suite('Linting - Provider', () => {
         serviceManager.add(IAvailableLinterActivator, AvailableLinterActivator);
         serviceManager.addSingleton<IInterpreterAutoSelectionService>(
             IInterpreterAutoSelectionService,
-            MockAutoSelectionService
+            MockAutoSelectionService,
         );
-        serviceManager.addSingleton<IInterpreterAutoSeletionProxyService>(
-            IInterpreterAutoSeletionProxyService,
-            MockAutoSelectionService
+        serviceManager.addSingleton<IInterpreterAutoSelectionProxyService>(
+            IInterpreterAutoSelectionProxyService,
+            MockAutoSelectionService,
         );
         serviceManager.addSingleton<IPersistentStateFactory>(IPersistentStateFactory, PersistentStateFactory);
         serviceManager.addSingleton<vscode.Memento>(IMemento, MockMemento, GLOBAL_MEMENTO);
         serviceManager.addSingleton<vscode.Memento>(IMemento, MockMemento, WORKSPACE_MEMENTO);
+        serviceManager.addSingletonInstance<ICommandManager>(
+            ICommandManager,
+            TypeMoq.Mock.ofType<ICommandManager>().object,
+        );
         lm = new LinterManager(serviceContainer, workspaceService.object);
         serviceManager.addSingletonInstance<ILinterManager>(ILinterManager, lm);
         emitter = new vscode.EventEmitter<vscode.TextDocument>();

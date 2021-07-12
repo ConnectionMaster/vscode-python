@@ -3,12 +3,8 @@
 
 'use strict';
 
-// tslint:disable:no-any max-classes-per-file max-func-body-length
-
 import { expect } from 'chai';
-import {
-    anything, instance, mock, when,
-} from 'ts-mockito';
+import { anything, instance, mock, when } from 'ts-mockito';
 import { Disposable } from 'vscode';
 import { createDeferred } from '../../../../client/common/utils/async';
 import { noop } from '../../../../client/common/utils/misc';
@@ -30,9 +26,7 @@ suite('Interpreters - Locator Progress', () => {
             return Promise.resolve(this.hasInterpreterValue);
         }
 
-        public onLocating(
-            listener: (e: Promise<PythonEnvironment[]>) => unknown,
-        ): Disposable {
+        public onLocating(listener: (e: Promise<PythonEnvironment[]>) => unknown): Disposable {
             this.locatingCallback = listener;
             return { dispose: noop };
         }
@@ -52,12 +46,16 @@ suite('Interpreters - Locator Progress', () => {
         const locator = new Locator();
         when(serviceContainer.getAll(anything())).thenReturn([locator]);
         const progress = new InterpreterLocatorProgressService(instance(serviceContainer), []);
-        progress.register();
+        await progress.activate();
 
         let refreshingInvoked = false;
-        progress.onRefreshing(() => { refreshingInvoked = true; });
+        progress.onRefreshing(() => {
+            refreshingInvoked = true;
+        });
         let refreshedInvoked = false;
-        progress.onRefreshed(() => { refreshedInvoked = true; });
+        progress.onRefreshed(() => {
+            refreshedInvoked = true;
+        });
 
         const locatingDeferred = createDeferred<PythonEnvironment[]>();
         locator.locatingCallback!.bind(progress)(locatingDeferred.promise);
@@ -69,12 +67,16 @@ suite('Interpreters - Locator Progress', () => {
         const locator = new Locator();
         when(serviceContainer.getAll(anything())).thenReturn([locator]);
         const progress = new InterpreterLocatorProgressService(instance(serviceContainer), []);
-        progress.register();
+        await progress.activate();
 
         let refreshingInvoked = false;
-        progress.onRefreshing(() => { refreshingInvoked = true; });
+        progress.onRefreshing(() => {
+            refreshingInvoked = true;
+        });
         let refreshedInvoked = false;
-        progress.onRefreshed(() => { refreshedInvoked = true; });
+        progress.onRefreshed(() => {
+            refreshedInvoked = true;
+        });
 
         const locatingDeferred = createDeferred<PythonEnvironment[]>();
         locator.locatingCallback!.bind(progress)(locatingDeferred.promise);
@@ -91,12 +93,16 @@ suite('Interpreters - Locator Progress', () => {
         const locator3 = new Locator();
         when(serviceContainer.getAll(anything())).thenReturn([locator1, locator2, locator3]);
         const progress = new InterpreterLocatorProgressService(instance(serviceContainer), []);
-        progress.register();
+        await progress.activate();
 
         let refreshingInvoked = false;
-        progress.onRefreshing(() => { refreshingInvoked = true; });
+        progress.onRefreshing(() => {
+            refreshingInvoked = true;
+        });
         let refreshedInvoked = false;
-        progress.onRefreshed(() => { refreshedInvoked = true; });
+        progress.onRefreshed(() => {
+            refreshedInvoked = true;
+        });
 
         const locatingDeferred1 = createDeferred<PythonEnvironment[]>();
         locator1.locatingCallback!.bind(progress)(locatingDeferred1.promise);

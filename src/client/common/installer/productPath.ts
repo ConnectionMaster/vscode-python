@@ -3,15 +3,13 @@
 
 'use strict';
 
-// tslint:disable:max-classes-per-file
-
 import { inject, injectable } from 'inversify';
 import * as path from 'path';
 import { Uri } from 'vscode';
 import { IFormatterHelper } from '../../formatters/types';
 import { IServiceContainer } from '../../ioc/types';
 import { ILinterManager } from '../../linters/types';
-import { ITestsHelper } from '../../testing/common/types';
+import { ITestingService } from '../../testing/types';
 import { IConfigurationService, IInstaller, ModuleNamePurpose, Product } from '../types';
 import { IProductPathService } from './types';
 
@@ -28,7 +26,6 @@ export abstract class BaseProductPathsService implements IProductPathService {
         let moduleName: string | undefined;
         try {
             moduleName = this.productInstaller.translateProductToModuleName(product, ModuleNamePurpose.run);
-            // tslint:disable-next-line:no-empty
         } catch {}
 
         // User may have customized the module name or provided the fully qualifieid path.
@@ -81,7 +78,7 @@ export class TestFrameworkProductPathService extends BaseProductPathsService {
         super(serviceContainer);
     }
     public getExecutableNameFromSettings(product: Product, resource?: Uri): string {
-        const testHelper = this.serviceContainer.get<ITestsHelper>(ITestsHelper);
+        const testHelper = this.serviceContainer.get<ITestingService>(ITestingService);
         const settingsPropNames = testHelper.getSettingsPropertyNames(product);
         if (!settingsPropNames.pathName) {
             // E.g. in the case of UnitTests we don't allow customizing the paths.

@@ -3,8 +3,6 @@
 
 'use strict';
 
-// tslint:disable:max-func-body-length
-
 import { expect } from 'chai';
 
 import { getLanguageConfiguration } from '../../client/language/languageConfiguration';
@@ -12,8 +10,9 @@ import { getLanguageConfiguration } from '../../client/language/languageConfigur
 const NEEDS_INDENT = [
     /^break$/,
     /^continue$/,
-    /^raise$/, // only re-raise
-    /^return\b/
+    // raise is indented unless it's the only thing on the line
+    /^raise\b/,
+    /^return\b/,
 ];
 const INDENT_ON_ENTER = [
     // block-beginning statements
@@ -30,7 +29,9 @@ const INDENT_ON_ENTER = [
     /^for\b/,
     /^if\b/,
     /^elif\b/,
-    /^else\b/
+    /^else\b/,
+    /^match\b/,
+    /^case\b/,
 ];
 const DEDENT_ON_ENTER = [
     // block-ending statements
@@ -39,8 +40,10 @@ const DEDENT_ON_ENTER = [
     ///^return\b/,
     /^break$/,
     /^continue$/,
-    /^raise\b/,
-    /^pass\b/
+    // For now we are mostly ignoring "return".
+    // See https://github.com/microsoft/vscode-python/issues/10583.
+    /^raise$/,
+    /^pass\b/,
 ];
 
 function isMember(line: string, regexes: RegExp[]): boolean {
@@ -57,7 +60,7 @@ function resolveExample(
     leading: string,
     postKeyword: string,
     preColon: string,
-    trailing: string
+    trailing: string,
 ): [string | undefined, string | undefined, boolean] {
     let invalid: string | undefined;
     if (base.trim() === '') {
@@ -129,7 +132,7 @@ suite('Language Configuration', () => {
             const result = MULTILINE_SEPARATOR_INDENT_REGEX.test('a = "test"');
             expect(result).to.be.equal(
                 false,
-                'Multiline separator indent regex for regular strings should not have matches'
+                'Multiline separator indent regex for regular strings should not have matches',
             );
         });
 
@@ -137,7 +140,7 @@ suite('Language Configuration', () => {
             const result = MULTILINE_SEPARATOR_INDENT_REGEX.test("a = 'hello \\n'");
             expect(result).to.be.equal(
                 false,
-                'Multiline separator indent regex for strings with escaped characters should not have matches'
+                'Multiline separator indent regex for strings with escaped characters should not have matches',
             );
         });
 
@@ -145,7 +148,7 @@ suite('Language Configuration', () => {
             const result = MULTILINE_SEPARATOR_INDENT_REGEX.test("a = 'multiline \\");
             expect(result).to.be.equal(
                 true,
-                'Multiline separator indent regex for strings with newline separator should have matches'
+                'Multiline separator indent regex for strings with newline separator should have matches',
             );
         });
 
@@ -179,6 +182,16 @@ suite('Language Configuration', () => {
             'except TestError:',
             'except :',
             'finally:',
+            'match item:',
+            'case 200:',
+            'case (1, 1):',
+            'case Point(x=0, y=0):',
+            'case [Point(0, 0)]:',
+            'case Point(x, y) if x == y:',
+            'case (Point(x1, y1), Point(x2, y2) as p2):',
+            'case Color.RED:',
+            'case 401 | 403 | 404:',
+            'case _:',
             // simple statemenhts
             'pass',
             'raise Exception(msg)',
@@ -198,7 +211,7 @@ suite('Language Configuration', () => {
             // bogus
             '',
             ' ',
-            '  '
+            '  ',
         ].forEach((base) => {
             [
                 ['', '', '', ''],
@@ -215,7 +228,7 @@ suite('Language Configuration', () => {
                 // trailing
                 ['', '', '', ' '],
                 ['', '', '', '# a comment'],
-                ['', '', '', ' # ...']
+                ['', '', '', ' # ...'],
             ].forEach((whitespace) => {
                 const [leading, postKeyword, preColon, trailing] = whitespace;
                 const [_example, invalid, ignored] = resolveExample(base, leading, postKeyword, preColon, trailing);

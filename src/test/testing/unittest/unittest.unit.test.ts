@@ -9,47 +9,44 @@ import { Uri } from 'vscode';
 import { IWorkspaceService } from '../../../client/common/application/types';
 import { WorkspaceService } from '../../../client/common/application/workspace';
 import { ConfigurationService } from '../../../client/common/configuration/service';
+import { CommandSource } from '../../../client/common/constants';
 import {
     IConfigurationService,
     IDisposableRegistry,
     IOutputChannel,
-    IPythonSettings
+    IPythonSettings,
 } from '../../../client/common/types';
 import { ServiceContainer } from '../../../client/ioc/container';
 import { IServiceContainer } from '../../../client/ioc/types';
 import { ArgumentsHelper } from '../../../client/testing/common/argumentsHelper';
-import { CommandSource } from '../../../client/testing/common/constants';
 import { TestCollectionStorageService } from '../../../client/testing/common/services/storageService';
 import { TestResultsService } from '../../../client/testing/common/services/testResultsService';
 import { TestsStatusUpdaterService } from '../../../client/testing/common/services/testsStatusService';
 import { TestsHelper } from '../../../client/testing/common/testUtils';
 import { TestResultResetVisitor } from '../../../client/testing/common/testVisitors/resultResetVisitor';
 import {
+    IArgumentsHelper,
+    IArgumentsService,
     FlattenedTestFunction,
     FlattenedTestSuite,
+    ITestManagerRunner,
     ITestResultsService,
     ITestsHelper,
     ITestsStatusUpdaterService,
+    TestDataItemType,
     TestFile,
     TestFolder,
     TestFunction,
     Tests,
     TestStatus,
-    TestSuite
+    TestSuite,
 } from '../../../client/testing/common/types';
-import {
-    IArgumentsHelper,
-    IArgumentsService,
-    ITestManagerRunner,
-    TestDataItemType
-} from '../../../client/testing/types';
 import { TestManager } from '../../../client/testing/unittest/main';
 import { TestManagerRunner } from '../../../client/testing/unittest/runner';
 import { ArgumentsService } from '../../../client/testing/unittest/services/argsService';
 import { MockOutputChannel } from '../../mockClasses';
 import { createMockTestDataItem } from '../common/testUtils.unit.test';
 
-// tslint:disable:max-func-body-length no-any
 suite('Unit Tests - unittest - run failed tests', () => {
     let testManager: TestManager;
     const workspaceFolder = Uri.file(__dirname);
@@ -99,43 +96,43 @@ suite('Unit Tests - unittest - run failed tests', () => {
         suite3.functions.push(fn5);
         const flattendSuite1: FlattenedTestSuite = {
             testSuite: suite1,
-            xmlClassName: suite1.xmlName
+            xmlClassName: suite1.xmlName,
         } as any;
         const flattendSuite2: FlattenedTestSuite = {
             testSuite: suite2,
-            xmlClassName: suite2.xmlName
+            xmlClassName: suite2.xmlName,
         } as any;
         const flattendSuite3: FlattenedTestSuite = {
             testSuite: suite3,
-            xmlClassName: suite3.xmlName
+            xmlClassName: suite3.xmlName,
         } as any;
         const flattendSuite4: FlattenedTestSuite = {
             testSuite: suite4,
-            xmlClassName: suite4.xmlName
+            xmlClassName: suite4.xmlName,
         } as any;
         const flattendSuite5: FlattenedTestSuite = {
             testSuite: suite5,
-            xmlClassName: suite5.xmlName
+            xmlClassName: suite5.xmlName,
         } as any;
         const flattendFn1: FlattenedTestFunction = {
             testFunction: fn1,
-            xmlClassName: fn1.name
+            xmlClassName: fn1.name,
         } as any;
         const flattendFn2: FlattenedTestFunction = {
             testFunction: fn2,
-            xmlClassName: fn2.name
+            xmlClassName: fn2.name,
         } as any;
         const flattendFn3: FlattenedTestFunction = {
             testFunction: fn3,
-            xmlClassName: fn3.name
+            xmlClassName: fn3.name,
         } as any;
         const flattendFn4: FlattenedTestFunction = {
             testFunction: fn4,
-            xmlClassName: fn4.name
+            xmlClassName: fn4.name,
         } as any;
         const flattendFn5: FlattenedTestFunction = {
             testFunction: fn5,
-            xmlClassName: fn5.name
+            xmlClassName: fn5.name,
         } as any;
         tests = {
             rootTestFolders: [folder1],
@@ -143,7 +140,7 @@ suite('Unit Tests - unittest - run failed tests', () => {
             testFiles: [file1, file2, file3, file4],
             testFolders: [folder1, folder2, folder3, folder4, folder5],
             testFunctions: [flattendFn1, flattendFn2, flattendFn3, flattendFn4, flattendFn5],
-            testSuites: [flattendSuite1, flattendSuite2, flattendSuite3, flattendSuite4, flattendSuite5]
+            testSuites: [flattendSuite1, flattendSuite2, flattendSuite3, flattendSuite4, flattendSuite5],
         };
     }
     setup(() => {
@@ -159,17 +156,17 @@ suite('Unit Tests - unittest - run failed tests', () => {
         when(serviceContainer.get<IWorkspaceService>(IWorkspaceService)).thenReturn(instance(workspaceService));
         when(serviceContainer.get<IArgumentsHelper>(IArgumentsHelper)).thenReturn(new ArgumentsHelper());
         when(serviceContainer.get<IArgumentsService>(IArgumentsService, anything())).thenReturn(
-            new ArgumentsService(svcInstance)
+            new ArgumentsService(svcInstance),
         );
         when(serviceContainer.get<ITestsHelper>(ITestsHelper)).thenReturn(instance(testsHelper));
         when(serviceContainer.get<ITestManagerRunner>(ITestManagerRunner, anything())).thenReturn(
-            instance(testManagerRunner)
+            instance(testManagerRunner),
         );
         when(serviceContainer.get<ITestsStatusUpdaterService>(ITestsStatusUpdaterService)).thenReturn(
-            new TestsStatusUpdaterService(instance(testStorage))
+            new TestsStatusUpdaterService(instance(testStorage)),
         );
         when(serviceContainer.get<ITestResultsService>(ITestResultsService)).thenReturn(
-            new TestResultsService(new TestResultResetVisitor())
+            new TestResultsService(new TestResultResetVisitor()),
         );
         when(serviceContainer.get<IOutputChannel>(IOutputChannel)).thenReturn(instance(mock(MockOutputChannel)));
         when(serviceContainer.get<IOutputChannel>(IOutputChannel)).thenReturn(instance(mock(MockOutputChannel)));
@@ -177,8 +174,8 @@ suite('Unit Tests - unittest - run failed tests', () => {
         const settingsService = mock(ConfigurationService);
         const settings: IPythonSettings = {
             testing: {
-                unittestArgs: []
-            }
+                unittestArgs: [],
+            },
         } as any;
         when(settingsService.getSettings(anything())).thenReturn(settings);
         when(serviceContainer.get<IConfigurationService>(IConfigurationService)).thenReturn(instance(settingsService));

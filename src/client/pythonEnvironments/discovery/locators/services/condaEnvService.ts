@@ -5,7 +5,7 @@ import { inject, injectable } from 'inversify';
 import { Uri } from 'vscode';
 import { traceError } from '../../../../common/logger';
 import { IFileSystem } from '../../../../common/platform/types';
-import { ICondaService, IInterpreterHelper } from '../../../../interpreter/contracts';
+import { ICondaLocatorService, IInterpreterHelper } from '../../../../interpreter/contracts';
 import { IServiceContainer } from '../../../../ioc/types';
 import { PythonEnvironment } from '../../../info';
 import { CacheableLocatorService } from './cacheableLocatorService';
@@ -17,7 +17,7 @@ import { parseCondaInfo } from './conda';
 @injectable()
 export class CondaEnvService extends CacheableLocatorService {
     constructor(
-        @inject(ICondaService) private condaService: ICondaService,
+        @inject(ICondaLocatorService) private condaService: ICondaLocatorService,
         @inject(IInterpreterHelper) private helper: IInterpreterHelper,
         @inject(IServiceContainer) serviceContainer: IServiceContainer,
         @inject(IFileSystem) private fileSystem: IFileSystem,
@@ -30,8 +30,10 @@ export class CondaEnvService extends CacheableLocatorService {
      *
      * Called by VS Code to indicate it is done with the resource.
      */
-    // tslint:disable-next-line:no-empty
-    public dispose() {}
+
+    public dispose(): void {
+        // No body
+    }
 
     /**
      * Return the located interpreters.
@@ -61,8 +63,8 @@ export class CondaEnvService extends CacheableLocatorService {
             const environments = await this.condaService.getCondaEnvironments(true);
             if (Array.isArray(environments) && environments.length > 0) {
                 interpreters.forEach((interpreter) => {
-                    const environment = environments.find(
-                        (item) => this.fileSystem.arePathsSame(item.path, interpreter!.envPath!),
+                    const environment = environments.find((item) =>
+                        this.fileSystem.arePathsSame(item.path, interpreter!.envPath!),
                     );
                     if (environment) {
                         interpreter.envName = environment!.name;
